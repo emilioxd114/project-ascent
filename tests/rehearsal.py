@@ -50,6 +50,7 @@ class FakeGUI:
         cv2.destroyWindow = lambda *a, **k: None
         cv2.destroyAllWindows = lambda *a, **k: None
         cv2.setMouseCallback = self.setMouseCallback
+        cv2.setWindowProperty = lambda *a, **k: None
         cv2.waitKey = self.waitKey
 
 
@@ -188,7 +189,7 @@ def main():
         ascent.Tracker.locate = spy
         gui.strict = False
         gui.actions = [("key", -1)] * 10 + [("key", "g")] + [("key", -1)] * 8 + [("key", "n")] + \
-                      [("key", -1)] * 4 + [("key", "s")]
+                      [("key", -1)] * 4 + [("key", "s"), ("key", "f"), ("key", -1), ("key", "f")]
         ascent.cmd_live(SimpleNamespace(wall="panel", route="r2", camera=0, video="cam.avi", features="sift",
                                         train="sloper", moves=5, height=172, level="medium"))
         ascent.Tracker.locate = real_locate
@@ -206,6 +207,23 @@ def main():
         check("rings land on the holds", errs and max(errs) < 6, f"worst {max(errs):.1f} px" if errs else "no lock")
         check("g key generated a new route", "r5" in ascent.route_names("panel"), str(ascent.route_names("panel")))
         check("screenshot saved", os.path.exists("ascent_shot_1.png"))
+
+        # --- venue lighting: the wall must still lock in dim light, glare and a harsh spotlight
+        tracker = ascent.Tracker(wall, photo)
+        H_mid = Hs[18]
+        base = cv2.warpPerspective(photo, H_mid, (1280, 720), borderValue=(30, 30, 30))
+        yy, xx = np.mgrid[0:720, 0:1280]
+        spot = np.exp(-(((xx - 900) / 450) ** 2 + ((yy - 220) / 320) ** 2))
+        lights = {
+            "dim": cv2.convertScaleAbs(base, alpha=0.25),
+            "glare": cv2.convertScaleAbs(base, alpha=1.8, beta=40),
+            "spotlight": np.clip(base * (0.05 + 0.95 * spot)[..., None], 0, 255).astype(np.uint8),
+            "dim+noise+blur": cv2.GaussianBlur(cv2.add(cv2.convertScaleAbs(base, alpha=0.35),
+                                               np.random.default_rng(2).integers(0, 25, base.shape, dtype=np.uint8)),
+                                               (5, 5), 0),
+        }
+        held = [name for name, img in lights.items() if tracker.locate(img)[0] is not None]
+        check("locks in bad venue lighting", len(held) == len(lights), f"{held}")
 
         # --- live with no --route picks the newest one and still runs
         gui.actions = []

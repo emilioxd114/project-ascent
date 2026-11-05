@@ -1,5 +1,7 @@
 # Project Ascent — prototype, start here
 
+Presenting? The on-stage script is in [DEMO.md](DEMO.md).
+
 One Python file, runs on a laptop with its webcam. No app, no server, no internet.
 
 ## 1. Install (5 minutes, do it tonight)
@@ -44,7 +46,7 @@ python ascent.py live --wall panel --route r1
 
 Move the laptop around. The numbered rings should stay on the holds. If they don't, the screen says which way to move instead of guessing.
 
-Keys: **g** generate a new route on the spot, **n** next saved route, **s** screenshot, **v** start/stop recording a video, **q** quit.
+Keys: **g** generate a new route on the spot, **n** next saved route, **f** full screen (for the projector), **s** screenshot, **v** start/stop recording a video, **q** quit.
 
 `--route` is optional: without it, `live` shows the newest route. To control what **g** generates, add the same options as `generate`, for example `--train sloper --moves 5`.
 
@@ -78,7 +80,7 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode and re-scanning. 18 checks, all passing.
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. 19 checks, all passing.
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.

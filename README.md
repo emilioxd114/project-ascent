@@ -11,6 +11,6 @@ pip install -r requirements.txt
 python ascent.py selftest
 ```
 
-How to run everything: [START_HERE.md](START_HERE.md). Context for Claude Code: [CLAUDE.md](CLAUDE.md). Fallback markers to print at 100%: [print/aruco_markers_A4.pdf](print/aruco_markers_A4.pdf).
+How to run everything: [START_HERE.md](START_HERE.md). Pitch demo script: [DEMO.md](DEMO.md). Context for Claude Code: [CLAUDE.md](CLAUDE.md). Fallback markers to print at 100%: [print/aruco_markers_A4.pdf](print/aruco_markers_A4.pdf).
 
 Scanned walls are saved in `walls/` and committed, so every laptop on the team can use the same scan.

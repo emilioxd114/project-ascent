@@ -209,8 +209,16 @@ class Tracker:
         else:
             self.det = cv2.ORB_create(nfeatures=4000)
             self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
-        self.kp_r, self.des_r = self.det.detectAndCompute(small, None)
-        if self.des_r is None or len(self.kp_r) < 30:
+        # Two looks at every image: as it is, and with local contrast evened out.
+        # The plain look copes with dim light; the corrected one copes with spotlights.
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        self.refs = {
+            "plain": self.det.detectAndCompute(small, None),
+            "contrast": self.det.detectAndCompute(self.clahe.apply(small), None),
+        }
+        self.order = ["plain", "contrast"]
+        kp, des = self.refs["plain"]
+        if des is None or len(kp) < 30:
             print("Warning: the saved photo has very little texture. Consider --markers.")
 
     def locate(self, frame):
@@ -235,14 +243,27 @@ class Tracker:
         f = min(1.0, 960.0 / fw)
         F = np.diag([f, f, 1.0])
         small = cv2.resize(gray, (0, 0), fx=f, fy=f, interpolation=cv2.INTER_AREA)
-        kp_f, des_f = self.det.detectAndCompute(small, None)
-        if des_f is None or self.des_r is None or len(kp_f) < 10:
+        first_state = None
+        for look in list(self.order):
+            img = small if look == "plain" else self.clahe.apply(small)
+            H, state = self._match(look, img, F, fw, fh)
+            if H is not None:
+                if self.order[0] != look:
+                    self.order = [look] + [o for o in self.order if o != look]
+                return H, state
+            first_state = first_state or state
+        return None, first_state
+
+    def _match(self, look, img, F, fw, fh):
+        kp_r, des_r = self.refs[look]
+        kp_f, des_f = self.det.detectAndCompute(img, None)
+        if des_f is None or des_r is None or len(kp_f) < 10:
             return None, "lost"
-        pairs = self.matcher.knnMatch(self.des_r, des_f, k=2)
+        pairs = self.matcher.knnMatch(des_r, des_f, k=2)
         good = [p[0] for p in pairs if len(p) == 2 and p[0].distance < 0.75 * p[1].distance]
         if len(good) < 12:
             return None, "lost"
-        src = np.float32([self.kp_r[m.queryIdx].pt for m in good])
+        src = np.float32([kp_r[m.queryIdx].pt for m in good])
         dst = np.float32([kp_f[m.trainIdx].pt for m in good])
         Hs, mask = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
         if Hs is None:
@@ -770,6 +791,9 @@ def cmd_live(args):
     else:
         cap = open_camera(args.camera)
 
+    win = "Ascent - live"
+    cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+    full = False
     smooth, last_lock, started = None, 0.0, time.time()
     writer, shots = None, 0
     messages = {
@@ -777,7 +801,7 @@ def cmd_live(args):
         "close": ("Step back - show more of the wall", AMBER),
         "lost": (f"Point the camera at '{wall['name']}'", GREY),
     }
-    print("q = quit, g = generate a new route, n = next route, s = screenshot, v = record video")
+    print("q = quit, g = generate a new route, n = next route, f = full screen, s = screenshot, v = record video")
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -810,14 +834,18 @@ def cmd_live(args):
             else:
                 text, col = messages[state]
                 put_text(view, text, (16, 34), 0.75, col)
-        put_text(view, "g new route   n next   v record   q quit", (16, view.shape[0] - 18), 0.5, GREY, 1)
+        put_text(view, "g new route   n next   f full screen   v record   q quit", (16, view.shape[0] - 18), 0.5, GREY, 1)
         if writer is not None:
             writer.write(view)
             cv2.circle(view, (view.shape[1] - 24, 24), 9, (60, 60, 230), -1)
-        cv2.imshow("Ascent - live", view)
+        cv2.imshow(win, view)
         k = cv2.waitKey(1) & 0xFF
         if k == ord("q") or k == 27:
             break
+        if k == ord("f"):
+            full = not full
+            cv2.setWindowProperty(win, cv2.WND_PROP_FULLSCREEN,
+                                  cv2.WINDOW_FULLSCREEN if full else cv2.WINDOW_NORMAL)
         if k == ord("g"):
             new = make_generated_route(wall, args.moves, args.height, train, args.level)
             if new is None:
