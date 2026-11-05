@@ -8,6 +8,8 @@ A laptop webcam looks at a climbing wall and draws a climbing route (numbered ri
 
 Everything lives in `ascent.py`. Read `START_HERE.md` for commands.
 
+**Full project documentation is in `docs/`** — context and challenge, personas, competitors, product decisions, all three working groups, design, architecture and data formats, legal and safety, status and next steps. Start with `docs/README.md`. Read the relevant file before changing behaviour, and update it when a decision changes.
+
 - `scan`: photo of the wall, user clicks the 4 corners, types the real size in cm, clicks and tags every hold. Saves `walls/<name>/wall.json` and `ref.jpg`.
 - `generate`: rules-based route generator, no AI. Moves within reach (0.55 × height), going up, or sideways for traverse. Skill filters: reach, traverse, and the hold types tagged by hand.
 - `build`: user clicks holds in order. Warns about moves that are past reach.
