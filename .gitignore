@@ -1,0 +1,8 @@
+# Demo recordings and screenshots can show people at the wall - keep them off GitHub
+*.mp4
+ascent_shot_*.png
+
+__pycache__/
+*.pyc
+.venv/
+venv/
