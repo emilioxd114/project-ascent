@@ -44,7 +44,11 @@ python ascent.py live --wall panel --route r1
 
 Move the laptop around. The numbered rings should stay on the holds. If they don't, the screen says which way to move instead of guessing.
 
-Keys: **q** quit, **s** screenshot, **v** start/stop recording a video.
+Keys: **g** generate a new route on the spot, **n** next saved route, **s** screenshot, **v** start/stop recording a video, **q** quit.
+
+`--route` is optional: without it, `live` shows the newest route. To control what **g** generates, add the same options as `generate`, for example `--train sloper --moves 5`.
+
+**The demo moment:** `python ascent.py live --wall panel --train sloper`, point at the panel, press **g**. A new sloper route appears on the real holds.
 
 ## 3. Record the demo the moment it works
 
@@ -70,8 +74,16 @@ This draws the route on the saved photo. Combined with the recorded video and th
 
 ## What is tested and what is not
 
-- **Tested:** tracking accuracy on simulated photos (under 1 pixel of error), markers, route generation and reach checks, wall versioning.
-- **Not tested:** the click windows and the live webcam, because they need a screen and a camera. Run `scan` early tomorrow so there's time to fix anything.
+```
+python tests/rehearsal.py
+```
+
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode and re-scanning. 18 checks, all passing.
+
+- **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
+- **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.
+
+To replay a recording instead of the webcam: `python ascent.py live --wall panel --video clip.mp4`.
 
 ## Re-scanning after a reset
 

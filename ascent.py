@@ -528,9 +528,11 @@ def click_holds(photo, corners):
         cv2.polylines(view, [np.int32(corners * s)], True, AMBER, 1, cv2.LINE_AA)
         for i, h in enumerate(holds):
             c = (int(h["px"][0] * s), int(h["px"][1] * s))
-            cv2.circle(view, c, 10, WHITE if h["type"] else GREY, 2, cv2.LINE_AA)
+            last = i == len(holds) - 1
+            cv2.circle(view, c, 15, DARK, 6, cv2.LINE_AA)
+            cv2.circle(view, c, 15, AMBER if last else WHITE, 3, cv2.LINE_AA)
             if h["type"]:
-                put_text(view, h["type"][0].upper(), (c[0] + 12, c[1] + 6), 0.5, WHITE, 1)
+                put_text(view, h["type"], (c[0] + 19, c[1] + 6), 0.5, WHITE, 1)
         banner(view, [f"{len(holds)} holds. Click each hold.",
                       "Tag the last one: j jug  c crimp  s sloper  p pinch  k pocket",
                       "u = undo, Enter = done"])
@@ -627,34 +629,56 @@ def save_route(wall, ids, name, how, height, train=()):
     return route
 
 
-def next_route_name(wall_name):
+def route_names(wall_name):
     d = wall_path(wall_name, "routes")
-    n = len([f for f in os.listdir(d) if f.endswith(".json")]) + 1 if os.path.isdir(d) else 1
+    if not os.path.isdir(d):
+        return []
+    names = [f[:-5] for f in os.listdir(d) if f.endswith(".json")]
+    return sorted(names, key=lambda n: (0, int(n[1:])) if n[:1] == "r" and n[1:].isdigit() else (1, n))
+
+
+def next_route_name(wall_name):
+    taken = set(route_names(wall_name))
+    n = 1
+    while f"r{n}" in taken:
+        n += 1
     return f"r{n}"
 
 
-def cmd_generate(args):
-    wall, ref = load_wall(args.wall)
-    train = [t.strip().lower() for t in args.train.split(",") if t.strip()] if args.train else []
+def parse_train(text):
+    return [t.strip().lower() for t in text.split(",") if t.strip()] if text else []
+
+
+def make_generated_route(wall, moves, height, train, level, seed=None, name=None):
+    """Generate, save and return a route, or None if nothing fits. Shared by 'generate' and the live 'g' key."""
     typed = {h.get("type") for h in wall["holds"]}
     for t in train:
         if t in HOLD_TYPES.values() and t not in typed:
             print(f"Note: no hold is tagged '{t}', so that filter cannot work. Tag holds during the scan.")
     ids = None
-    for moves in range(args.moves, 2, -1):
-        ids = generate_route(wall, moves, args.height, train, args.level, args.seed)
+    for n in range(moves, 2, -1):
+        ids = generate_route(wall, n, height, train, level, seed)
         if ids:
-            if moves < args.moves:
-                print(f"Could not fit {args.moves} holds on this wall within reach - made a {moves}-hold route.")
+            if n < moves:
+                print(f"Could not fit {moves} holds on this wall within reach - made a {n}-hold route.")
             break
     if not ids:
-        sys.exit("No route fits these settings. Try fewer moves, an easier level, or tap more holds.")
-    name = args.name or next_route_name(args.wall)
-    route = save_route(wall, ids, name, "generated", args.height, train)
+        return None
+    name = name or next_route_name(wall["name"])
+    route = save_route(wall, ids, name, "generated", height, train)
     print(f"Route '{name}': holds {ids}, grade {route['estimated_grade']} (estimated)")
     for w in route["warnings"]:
         print("  ! " + w)
-    print(f"Climb it: python ascent.py live --wall {args.wall} --route {name}")
+    return route
+
+
+def cmd_generate(args):
+    wall, ref = load_wall(args.wall)
+    route = make_generated_route(wall, args.moves, args.height, parse_train(args.train), args.level,
+                                 args.seed, args.name)
+    if route is None:
+        sys.exit("No route fits these settings. Try fewer moves, an easier level, or tap more holds.")
+    print(f"Climb it: python ascent.py live --wall {args.wall} --route {route['name']}")
     if args.preview:
         show_preview(wall, ref, route)
 
@@ -719,14 +743,32 @@ def cmd_preview(args):
 
 def cmd_live(args):
     wall, ref = load_wall(args.wall)
-    route = load_route(args.wall, args.route)
-    if route.get("wall_version") != wall["version"]:
-        print("Warning: this route was made on an older version of the wall.")
+    train = parse_train(args.train)
+    names = route_names(args.wall)
+    if args.route:
+        route = load_route(args.wall, args.route)
+    elif names:
+        route = load_route(args.wall, names[-1])
+    else:
+        route = make_generated_route(wall, args.moves, args.height, train, args.level)
+        if route is None:
+            sys.exit("This wall has no routes and none could be generated. Tap more holds in the scan.")
     px = {h["id"]: h["px"] for h in wall["holds"]}
-    ref_pts = np.array([px[i] for i in route["holds"]], dtype=np.float32)
+
+    def use(r):
+        if r.get("wall_version") != wall["version"]:
+            print(f"Warning: route {r['name']} was made on an older version of the wall.")
+        return r, np.array([px[i] for i in r["holds"]], dtype=np.float32)
+
+    route, ref_pts = use(route)
     ring_ref = 0.022 * ref.shape[1]
     tracker = Tracker(wall, ref, args.features)
-    cap = open_camera(args.camera)
+    if args.video:
+        cap = cv2.VideoCapture(args.video)
+        if not cap.isOpened():
+            sys.exit(f"Could not open video {args.video}")
+    else:
+        cap = open_camera(args.camera)
 
     smooth, last_lock, started = None, 0.0, time.time()
     writer, shots = None, 0
@@ -735,7 +777,7 @@ def cmd_live(args):
         "close": ("Step back - show more of the wall", AMBER),
         "lost": (f"Point the camera at '{wall['name']}'", GREY),
     }
-    print("q = quit, s = screenshot, v = record video")
+    print("q = quit, g = generate a new route, n = next route, s = screenshot, v = record video")
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -745,13 +787,17 @@ def cmd_live(args):
         view = frame.copy()
         if H is not None:
             pts = transform(H, ref_pts)
-            if smooth is not None and np.mean(np.linalg.norm(pts - smooth, axis=1)) < 40:
+            if smooth is not None and len(smooth) == len(pts) and np.mean(np.linalg.norm(pts - smooth, axis=1)) < 40:
                 pts = 0.5 * smooth + 0.5 * pts
             smooth, last_lock = pts, now
             edge = transform(H, [[0, 0], [ring_ref, 0]])
             radius = float(np.linalg.norm(edge[1] - edge[0]))
             draw_route(view, pts, radius)
             put_text(view, f"Locked  {route['name']}  {route['estimated_grade']}", (16, 34), 0.75, GREEN)
+            detail = ", ".join(route.get("train") or []) or route.get("made_by", "")
+            put_text(view, f"{len(route['holds'])} holds  {detail}", (16, 64), 0.6, WHITE)
+            if route.get("warnings"):
+                put_text(view, "! " + route["warnings"][0], (16, 92), 0.6, AMBER)
         elif smooth is not None and now - last_lock < 0.25:
             draw_route(view, smooth, 18)
         else:
@@ -764,6 +810,7 @@ def cmd_live(args):
             else:
                 text, col = messages[state]
                 put_text(view, text, (16, 34), 0.75, col)
+        put_text(view, "g new route   n next   v record   q quit", (16, view.shape[0] - 18), 0.5, GREY, 1)
         if writer is not None:
             writer.write(view)
             cv2.circle(view, (view.shape[1] - 24, 24), 9, (60, 60, 230), -1)
@@ -771,6 +818,20 @@ def cmd_live(args):
         k = cv2.waitKey(1) & 0xFF
         if k == ord("q") or k == 27:
             break
+        if k == ord("g"):
+            new = make_generated_route(wall, args.moves, args.height, train, args.level)
+            if new is None:
+                print("No route fits these settings.")
+            else:
+                route, ref_pts = use(new)
+                smooth = None
+        if k == ord("n"):
+            names = route_names(args.wall)
+            if names:
+                i = names.index(route["name"]) if route["name"] in names else -1
+                route, ref_pts = use(load_route(args.wall, names[(i + 1) % len(names)]))
+                smooth = None
+                print(f"Showing route {route['name']}")
         if k == ord("s"):
             shots += 1
             name = f"ascent_shot_{shots}.png"
@@ -840,9 +901,14 @@ def main():
 
     p = sub.add_parser("live")
     p.add_argument("--wall", required=True)
-    p.add_argument("--route", required=True)
+    p.add_argument("--route", help="route to show first; default: the newest one")
     p.add_argument("--camera", type=int, default=0)
+    p.add_argument("--video", help="use a video file instead of the webcam")
     p.add_argument("--features", choices=["sift", "orb"], default="sift")
+    p.add_argument("--train", default="", help="settings for the g key: comma list like generate")
+    p.add_argument("--moves", type=int, default=6)
+    p.add_argument("--height", type=float, default=172)
+    p.add_argument("--level", choices=list(LEVEL_TARGET), default="medium")
 
     p = sub.add_parser("preview")
     p.add_argument("--wall", required=True)

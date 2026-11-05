@@ -18,7 +18,7 @@ Everything lives in `ascent.py`. Read `START_HERE.md` for commands.
 ## Rules for changing this code
 
 - Keep it ONE Python file. No frameworks, no web app, no mobile build, no database. OpenCV + numpy only.
-- Make small changes, then run them. Run `python ascent.py selftest` after any change to tracking code.
+- Make small changes, then run them. After any change, run `python tests/rehearsal.py`: it plays a whole session with scripted clicks and a fake camera and must stay at all checks passing.
 - Keep printed and on-screen strings ASCII-only. The OpenCV text renderer and some Windows consoles can't show other characters.
 - Don't change `wall.json` and route file formats without a reason. Existing scans must keep working.
 - Never draw an overlay when the wall is not locked. Showing nothing is better than a wrong overlay.
@@ -27,6 +27,6 @@ Everything lives in `ascent.py`. Read `START_HERE.md` for commands.
 
 ## Known gaps
 
-- The click windows and the live webcam were not tested before the event. Test them first.
+- The rehearsal tests the logic of the windows and the camera loop, but not a real webcam or real Windows windows. Test those first at the panel.
 - Photo matching may struggle on a low-texture panel. Switch to `--markers` if so.
 - Grades are estimates from move length, shown with a `~`.
