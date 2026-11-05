@@ -16,6 +16,12 @@ The team built three personas. The product is designed for **Lena first**; Max a
 - **Influencers:** her climbing friend, stronger climbers at the gym, the route setter, Instagram and YouTube.
 - **Demands:** routes tagged **by skill, not only by grade**. No competitor does this.
 
+**Point of view:** Lena, a regular climber at a small gym, needs routes that target the specific skill she's weak at, because the spray wall offers hundreds of holds and no structure, so she repeats what she already knows and stops improving.
+
+**How might we** let a climber see — and later verify — a route that trains exactly what she needs, using only the phone in her pocket?
+
+**Validation status:** Lena is a hypothesis built from research, not yet confirmed in interviews. Questions to ask real climbers: what do you do on a spray wall, do you film yourself, how do you know whether you're improving?
+
 ## Max — the young outdoor climber
 
 **Max, 14,** lives in a village in Tirol with a free outdoor boulder area. No gym, no coach, no money of his own. Videogames, VR, adventures with friends. Self-taught for about two years.

@@ -22,6 +22,8 @@ These were worked out on day one and are the backbone of everything else.
 
 **6. Real centimetres.** Reach guardrails need scale; a photo only gives pixels. The scan asks for one real measurement.
 
+**6b. How close is close enough.** Holds sit 15–25 cm apart, so the overlay must land within about half that to point at the right one. Target: **within ~3 cm at 3–5 m**; above 7 cm it's broken. Rings (not dots) make small errors forgiving.
+
 **7. Rules, not AI, for route generation.** Every generated move is guaranteed within reach and explainable, with no training data. AI belongs on the roadmap — learning from which routes people complete and like.
 
 **8. Own the data.** After the Kilter–Aurora split, ArtRock should own the route database and wall maps, even if a partner builds the app.
@@ -29,6 +31,23 @@ These were worked out on day one and are the backbone of everything else.
 **9. Who pays (proposal).** Free for climbers, because they are the content. Gyms pay monthly per wall; therapists per practice; or ArtRock bundles the app with walls it sells, so the software sells walls.
 
 **10. Physical products are a moat.** Ideas only a manufacturer can execute: a wall-mounted phone cradle at the right height and angle; holds with a moulded identifier, so position and hold type come free with a scan; the hold map shipped with every new wall.
+
+## Making wall mapping fast
+
+Mapping a custom wall is the real bottleneck: if it takes a route setter an hour, the product doesn't scale past one wall. Ideas from the brainwriting session, roughly from cheapest to most ambitious:
+
+1. **Map the route, not the wall** — tap only the 8 holds of a route instead of all 200. Dissolves the problem for casual use.
+2. **Tap one blue hold, get all the blue ones** — colour sets select at once.
+3. **Detect, then correct** — colour segmentation finds most holds on a plain wall; the person fixes mistakes.
+4. **Point instead of tap** — a crosshair registers the hold under it after half a second.
+5. **Touch the holds** — someone walks along touching each hold while the camera watches; body tracking registers it.
+6. **Everyone does a little** — each user adds a few holds; the map completes over a week.
+7. **The map builds itself from use** — holds people actually touch get registered.
+8. **Download someone else's map** of the same wall.
+9. **The factory does it** — ArtRock knows where it bolted each hold; ship the map with the wall.
+10. **Identifiers moulded into the holds** — position *and* hold type come free with a scan. Only a manufacturer can do this.
+
+Hold *types* (crimp, sloper …) are much harder than positions: the camera can't reliably tell them apart. Options: tag by hand during the scan (current prototype), infer from how hands sit on the hold, or get them from the factory.
 
 ## The three working groups
 
