@@ -476,9 +476,15 @@ def rehearse_serve_live(photo):
     try:
         st, body, _ = phone.request("GET", "/live", code=False)
         check("serve: no code, no page", st == 403)
-        st, body, r = phone.request("GET", "/live")
-        check("serve: the code opens /live and sets a cookie", st == 200 and b"/api/frame" in body
+        st, body, r = phone.request("GET", "/")
+        st2, old, _ = phone.request("GET", "/live")
+        check("serve: the code opens the one page (three tabs) and sets a cookie", st == 200
+              and all(b'data-tab="%s"' % t for t in (b"live", b"scan", b"track")) and old == body
+              and all(f"web/{f}.js".encode() in body for f in ("common", "live", "scan", "track"))
               and "ascent_code=k3y5ab" in (r.getheader("Set-Cookie") or ""))
+        st, _, _ = phone.post("/api/log", {"message": "test error \u00e4", "page": "#scan"})
+        st2, _, _ = phone.post("/api/log", {"message": "x"}, code=False)
+        check("serve: phone errors are printed on the laptop (code needed)", st == 200 and st2 == 403)
         st, _, _ = phone.request("GET", "/api/walls", code=False)
         check("serve: no code, no data", st == 403)
         st, js, _ = phone.request("GET", "/web/common.js", code=False)
@@ -605,13 +611,9 @@ def rehearse_serve_scan(photo, holds, corners, mphoto):
         check("scan page: bad scans are refused and nothing is saved", codes == [400] * len(bad)
               and json.load(open("walls/phonewall/wall.json"))["version"] == 2
               and not os.path.exists("walls/evil"), str(codes))
-        st, page, _ = phone.request("GET", "/scan")
-        check("scan page: /scan loads", st == 200 and b"/api/scan" in page)
-        check("scan page: photo is taken in the page, not in the phone's camera app",
-              b"startCamera" in page and b"capture=" not in page)
-        st, home, _ = phone.request("GET", "/")
-        check("start page: one link opens all three pages",
-              st == 200 and all(p in home for p in (b'"/live"', b'"/scan"', b'"/track"')))
+        st, js, _ = phone.request("GET", "/web/scan.js", code=False)
+        check("scan page: scan.js loads, with the in-page camera", st == 200 and b"/api/scan" in js
+              and b"startCamera" in js)
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -694,8 +696,8 @@ def rehearse_serve_track(photo):
         st4, r4, _ = phone.post(f"/api/track/finish?sid={r3['sid']}")
         check("track page: no route, no MediaPipe, or a live session: a clear message, server stays up",
               (st, st2, st3, st4) == (400, 400, 200, 400) and "MediaPipe" in r2["error"], f"{st} {st2} {st3} {st4}")
-        st, page, _ = phone.request("GET", "/track")
-        check("track page: /track loads", st == 200 and b"AudioContext" in page)
+        st, js, _ = phone.request("GET", "/web/track.js", code=False)
+        check("track page: track.js loads", st == 200 and b"AudioContext" in js)
         for _ in range(9):
             ascent.make_pose_detector = lambda path=None: FakePose()
             phone.post("/api/track/start", {"wall": "tw", "route": "t1"})
@@ -705,6 +707,170 @@ def rehearse_serve_track(photo):
         ascent.make_pose_detector = real
         httpd.shutdown()
         httpd.server_close()
+
+
+def rehearse_sticker(photo, mphoto, holds, corners):
+    """track with coloured stickers instead of MediaPipe: touches, sounds, two stickers, same-colour holds,
+    markers mode, colour by click, nothing without a lock."""
+    def video(img, wall_name, frames_script, path, sticker_bgr=(60, 230, 60)):
+        wall = json.load(open(f"walls/{wall_name}/wall.json"))
+        px = {h["id"]: h["px"] for h in wall["holds"]}
+        Hs = camera_path(10 * len(frames_script) + 4)
+        w = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"MJPG"), 15, (1280, 720))
+        for i, H in enumerate(Hs):
+            f = cv2.warpPerspective(img, H, (1280, 720), borderValue=(30, 30, 30))
+            k = i // 10
+            for hold in (frames_script[k] if k < len(frames_script) else ()):
+                x, y = ascent.transform(H, [px[hold]])[0]
+                cv2.circle(f, (int(x) + 3, int(y) - 4), 6, sticker_bgr, -1, cv2.LINE_AA)   # the sticker
+            w.write(f)
+        w.release()
+
+    def run(wall_name, route_name, path, **kw):
+        sounds = []
+        real = ascent.play_sound
+        ascent.play_sound = sounds.append
+        try:
+            args = dict(wall=wall_name, route=route_name, camera=0, video=path, features="sift", touch_cm=None,
+                        pose_model=None, mute=False, climber=None, touch="sticker", sticker="green", dwell=0.5)
+            args.update(kw)
+            with contextlib.redirect_stdout(io.StringIO()):
+                s = ascent.run_track(SimpleNamespace(**args))
+        finally:
+            ascent.play_sound = real
+        return s, sounds
+
+    wall = json.load(open("walls/tw/wall.json"))
+    route = ascent.load_route("tw", "t1")["holds"]
+    px = {h["id"]: h["px"] for h in wall["holds"]}
+    off = [i for i in px if i not in route and all(np.linalg.norm(np.subtract(px[i], px[j])) > 60 for j in route)][0]
+    check("sticker: touch distance comes from the hold spacing", 2 <= ascent.auto_touch_cm(wall) <= 12,
+          f"{ascent.auto_touch_cm(wall):.1f} cm")
+    gui = FakeGUI()
+    gui.install()
+    gui.strict = False
+
+    video(photo, "tw", [(), (route[0],), (route[1],), (off,), (route[2],), (route[3],), (route[4],)], "st1.avi")
+    s, sounds = run("tw", "t1", "st1.avi")
+    check("sticker: positive sound for each hold in order, negative for an off-route hold",
+          sounds == ["good", "good", "off", "good", "good", "top"] and s["off_route"] == [off], str(sounds))
+    # two stickers: one stays on the start hold, the other climbs
+    video(photo, "tw", [(route[0], route[1])] + [(route[0], h) for h in route[1:]], "st2.avi")
+    s, sounds = run("tw", "t1", "st2.avi")
+    check("sticker: two stickers at once (one stays on the start)", s["result"] == "sent"
+          and sounds == ["good"] * 4 + ["top"], f"{s['result']} {sounds}")
+    # nothing without a lock
+    real_locate = ascent.Tracker.locate
+    ascent.Tracker.locate = lambda self, frame: (None, "lost")
+    try:
+        s, sounds = run("tw", "t1", "st1.avi")
+    finally:
+        ascent.Tracker.locate = real_locate
+    check("sticker: no lock, no touches, no sounds", s["reached"] == 0 and sounds == [])
+    # a sticker of a colour that some holds have: those holds are ignored, the sticker still counts
+    video(photo, "tw", [()] * 3, "st3.avi")
+    s, sounds = run("tw", "t1", "st3.avi", sticker="orange")
+    check("sticker: holds of the sticker's colour are not stickers", sounds == [] and s["reached"] == 0, str(sounds))
+    # in make_wall_photo every 5th hold (i % 5 == 4) is orange; ids follow the click order (id = i + 1)
+    plain = [h for h in sorted(px, key=lambda i: -px[i][1]) if (h - 1) % 5 != 4]
+    ascent.save_route(wall, [plain[0], plain[6], plain[12]], "o1", "built", 172)
+    o1 = ascent.load_route("tw", "o1")["holds"]
+    video(photo, "tw", [(h,) for h in o1], "st4.avi", sticker_bgr=(30, 140, 250))
+    s, sounds = run("tw", "o1", "st4.avi", sticker="orange")
+    check("sticker: ... but an orange sticker on other holds counts", sounds == ["good", "good", "top"], str(sounds))
+
+    det = ascent.StickerDetector("pink")
+    frame = np.full((100, 100, 3), 90, np.uint8)
+    cv2.circle(frame, (50, 50), 8, (60, 230, 60), -1)
+    check("sticker: clicking the sticker teaches its colour", det.sample(frame, 50, 50)
+          and det.hands(frame, 0) and not det.sample(frame, 5, 5))
+
+    # a prop wall and a 30 cm puppet: routes fit the puppet's reach
+    pwall = ascent.save_scan("prop", photo, corners, 60.0, 43.0, False,
+                             [{"px": list(map(float, h)), "type": None} for h in holds])
+    made = [quiet(ascent.cmd_generate, SimpleNamespace(wall="prop", name=f"p{i}", moves=5, height=30.0, train=t,
+                                                      level=lv, seed=i, preview=False, by=None))
+            for i, (t, lv) in enumerate([("", "easy"), ("reach", "medium"), ("traverse", "medium"), ("", "hard")])]
+    routes = [ascent.load_route("prop", f"p{i}") for i in range(4)]
+    check("prop wall: routes for a 30 cm puppet (easy, reach, traverse, hard), all within its reach",
+          all(len(r["holds"]) >= 4 and not any("past" in w for w in r["warnings"]) for r in routes),
+          str([len(r["holds"]) for r in routes]))
+
+    # markers wall + sticker
+    mwall = json.load(open("walls/mpanel/wall.json"))
+    ascent.save_route(mwall, [h["id"] for h in sorted(mwall["holds"], key=lambda h: -h["px"][1])[:4]], "m1",
+                      "built", 172)
+    mroute = ascent.load_route("mpanel", "m1")["holds"]
+    video(mphoto, "mpanel", [(h,) for h in mroute], "st5.avi")
+    s, sounds = run("mpanel", "m1", "st5.avi")
+    check("sticker: works on a markers wall", s["result"] == "sent" and sounds[-1] == "top", f"{s['result']} {sounds}")
+
+
+def rehearse_auto_scan(gui):
+    """scan --auto: holds found on a plain board, shown, one wrong one removed, one missed one added."""
+    gui.install()
+    def score(det, holds):
+        P, T = np.array([d["px"] for d in det]), np.array(holds, float)
+        d = np.linalg.norm(T[:, None] - P[None], axis=2)
+        return int((d.min(axis=1) < 10).sum()), int((d.min(axis=0) >= 10).sum())
+
+    results = []
+    for seed in (5, 9, 23):
+        photo, holds, corners = make_wall_photo(seed=seed)
+        results.append(score(ascent.detect_holds(photo, corners), holds))
+    check("auto holds: finds the holds on a plain board, no false ones",
+          all(f >= 25 and x <= 1 for f, x in results), str(results))
+    photo, holds, corners = make_wall_photo(seed=5)
+    xx = np.mgrid[0:720, 0:1280][1]
+    lit = np.clip(photo * (0.45 + 0.75 * xx / 1280)[..., None], 0, 255).astype(np.uint8)
+    f, x = score(ascent.detect_holds(lit, corners), holds)
+    check("auto holds: uneven light (dark on the left, bright on the right)", f >= 24 and x <= 5, f"{f} found, {x} false")
+    det = ascent.detect_holds(photo, corners)
+    truth = {0: "black", 1: "yellow", 2: "blue", 3: "red", 4: "orange"}         # make_wall_photo's colours
+    named = [(d["colour"], truth[int(np.argmin(np.linalg.norm(np.array(holds) - d["px"], axis=1))) % 5]) for d in det]
+    check("auto holds: hold colours named", sum(a == b for a, b in named) >= 0.9 * len(named),
+          f"{sum(a == b for a, b in named)}/{len(named)}")
+
+    # the scan with markers: corners found, holds found, the markers themselves are not holds
+    mphoto, mholds, _ = make_wall_photo(seed=9, markers=True)
+    cv2.imwrite("auto_m.jpg", mphoto)
+    found = ascent.detect_holds(mphoto, ascent.order_corners(
+        [c.mean(axis=0) for c in ascent.aruco_detect(cv2.cvtColor(mphoto, cv2.COLOR_BGR2GRAY)).values()]),
+        {str(k): v.tolist() for k, v in ascent.aruco_detect(cv2.cvtColor(mphoto, cv2.COLOR_BGR2GRAY)).items()})
+    _, ms = ascent.fit(mphoto)
+    grid = [(x, y) for x in range(260, 1020, 10) for y in range(100, 640, 10)]
+    empty = max(grid, key=lambda p: min((p[0] - a) ** 2 + (p[1] - b) ** 2 for a, b in mholds))
+    wrong = found[3]["px"]
+    gui.strict = True
+    gui.actions = [("click", wrong[0] * ms, wrong[1] * ms),            # remove one
+                   ("click", empty[0] * ms, empty[1] * ms), ("key", "s"),   # add one, tag it sloper
+                   ("click", 1, 1), ("key", "u"),                      # a stray click, undone
+                   ("key", 13)]
+    quiet(ascent.cmd_scan, SimpleNamespace(wall="autoprop", image="auto_m.jpg", markers=True, camera=0, auto=True,
+                                           width=60.0, height=45.0))
+    w = json.load(open("walls/autoprop/wall.json"))
+    pxs = [h["px"] for h in w["holds"]]
+    check("scan --auto: one removed, one added and tagged, markers are not holds",
+          len(w["holds"]) == len(found) and wrong not in pxs and w["holds"][-1]["type"] == "sloper"
+          and w["mode"] == "markers" and all(h.get("colour") for h in w["holds"]), f"{len(w['holds'])} holds")
+    gen = quiet(ascent.cmd_generate, SimpleNamespace(wall="autoprop", name="a1", moves=5, height=30.0, train="",
+                                                     level="medium", seed=1, preview=False, by=None))
+    check("scan --auto: a route can be made for a 30 cm puppet", "Route 'a1'" in gen, gen.strip()[:80])
+    cols = {h["id"]: h["colour"] for h in w["holds"]}
+    gen = quiet(ascent.cmd_generate, SimpleNamespace(wall="autoprop", name="c1", moves=4, height=30.0, train="traverse",
+                                                     level="easy", seed=2, preview=False, by=None, colour="red,blue"))
+    c1 = ascent.load_route("autoprop", "c1")
+    check("generate --colour: only holds of those colours", "Route 'c1'" in gen
+          and all(cols[i] in ("red", "blue") for i in c1["holds"]) and "red" in c1["train"], str(c1["holds"]))
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            ascent.cmd_generate(SimpleNamespace(wall="autoprop", name="c2", moves=4, height=30.0, train="",
+                                                level="easy", seed=2, preview=False, by=None, colour="green"))
+    except SystemExit:
+        pass
+    check("generate --colour: a colour no hold has is explained", "no hold has the colour 'green'" in buf.getvalue()
+          and "c2" not in ascent.route_names("autoprop"))
 
 
 def check(label, ok, detail=""):
@@ -889,6 +1055,8 @@ def main():
         rehearse_serve_live(photo)
         rehearse_serve_scan(photo, holds, corners, mphoto)
         rehearse_serve_track(photo)
+        rehearse_sticker(photo, mphoto, holds, corners)
+        rehearse_auto_scan(gui)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

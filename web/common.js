@@ -134,29 +134,47 @@ const Ascent = (() => {
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  async function fillWalls(wallSel, routeSel) {
+  // Fills a wall and a route list. needRoute: no "Newest route" choice (recording needs a specific one).
+  async function fillWalls(wallSel, routeSel, { wall = null, needRoute = false } = {}) {
     const { walls } = await getJSON("/api/walls");
+    const keep = wall || wallSel.value;
     wallSel.innerHTML = "";
     if (!walls.length) wallSel.add(new Option("No walls yet - scan one first", ""));
     walls.forEach(w => wallSel.add(new Option(`${w.name}  (v${w.version}, ${w.routes.length} routes)`, w.name)));
+    if (walls.some(w => w.name === keep)) wallSel.value = keep;
     const showRoutes = () => {
       routeSel.innerHTML = "";
       const w = walls.find(x => x.name === wallSel.value);
-      routeSel.add(new Option("Newest route", ""));
-      (w ? w.routes : []).filter(r => !r.old_version)
-        .forEach(r => routeSel.add(new Option(`${r.name}  ${r.grade || "?"}  ${r.holds} holds ` +
-                                              (r.train.join(", ") || r.made_by || ""), r.name)));
+      const routes = (w ? w.routes : []).filter(r => !r.old_version);
+      if (!needRoute) routeSel.add(new Option(routes.length ? "Newest route" : "None yet - a new one is made", ""));
+      else if (!routes.length) routeSel.add(new Option("No routes yet - make one on 'See a route'", ""));
+      routes.forEach(r => routeSel.add(new Option(`${r.name}  ${r.grade || "?"}  ${r.holds} holds ` +
+                                                  (r.train.join(", ") || r.made_by || ""), r.name)));
     };
     wallSel.onchange = showRoutes;
     showRoutes();
     return walls;
   }
 
+  // Full-screen camera views hide the tabs; Stop brings them back.
+  function fullscreen(on) { document.body.classList.toggle("fullcam", on); }
+
+  // Any error shows on the phone AND in the laptop's console, so it can be pasted to whoever fixes it.
+  function report(msg) {
+    msg = String(msg).slice(0, 500);
+    const box = document.getElementById("bug");
+    if (box) {
+      box.textContent = "Something went wrong: " + msg + "  (tap to hide)";
+      box.classList.remove("hidden");
+      box.onclick = () => box.classList.add("hidden");
+    }
+    fetch(url("/api/log"), { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: msg, page: location.hash, agent: navigator.userAgent }) }).catch(() => {});
+  }
+  window.addEventListener("error", e => report((e.message || "error") + (e.filename ? ` (${e.filename.split("/").pop()}:${e.lineno})` : "")));
+  window.addEventListener("unhandledrejection", e => report(e.reason && e.reason.message ? e.reason.message : e.reason));
+
   return { code, COLORS, url, api, getJSON, startCamera, stopCamera, grabFrame, fitCanvas, frameToScreen,
-           drawRings, ring, keepAwake, sleep, fillWalls };
+           drawRings, ring, keepAwake, sleep, fillWalls, fullscreen, report, views: {} };
 })();
 
-// Links between pages keep the access code.
-document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll("a[data-page]").forEach(a => { a.href = Ascent.url(a.dataset.page); });
-});

@@ -87,7 +87,59 @@ This plays a whole session with scripted clicks, keys and a fake camera video: s
 
 To replay a recording instead of the webcam: `python ascent.py live --wall panel --video clip.mp4`.
 
-## Phone as camera (`serve`)
+## Prop wall demo: phone as webcam, puppet with stickers
+
+The phone is a camera for the laptop through a webcam app (**Camo** or **DroidCam**: install it on the phone and on the laptop, connect them). The overlay shows on the laptop or projector. The laptop's own webcam is usually camera 0, the phone camera 1 - if 1 shows the wrong camera, try `--camera 2`.
+
+Before you start: tape the **4 printed markers** flat near the corners of the prop wall, and put a **sticker on each of the puppet's hands** in a colour that **no hold has** (neon green or pink are good).
+
+**1. Scan the wall (once, and again after moving holds)**
+
+```
+python ascent.py scan --wall prop --markers --auto --camera 1 --width 60 --height 45
+```
+
+- `--width` / `--height`: the distance **between the centres of the markers** in cm (top-left to top-right, top-left to bottom-left). Measure once with a tape.
+- A camera window opens: whole wall in frame, all 4 markers visible, **SPACE** takes the photo.
+- The holds are found automatically and shown as rings. **Click a ring** to remove a wrong one, **click a missed hold** to add it, **u** = undo, **Enter** = save.
+- Without `--markers`, click the 4 corners first. Without `--auto`, click every hold by hand (the fallback).
+
+**2. Make a route - by skill (automatic) or by hand**
+
+`--height` is the **puppet's** height in cm: every move stays within 0.55 x that.
+
+```
+python ascent.py generate --wall prop --height 30 --moves 5 --train reach --preview
+python ascent.py generate --wall prop --height 30 --moves 5 --train traverse --preview
+python ascent.py generate --wall prop --height 30 --moves 5 --level easy --preview
+python ascent.py generate --wall prop --height 30 --moves 5 --level hard --preview
+python ascent.py generate --wall prop --height 30 --moves 5 --colour red --preview
+python ascent.py build --wall prop --height 30
+```
+
+`--colour red` uses only red holds (the colours come from `scan --auto`; `--colour red,blue` for two). Combine with `--train` and `--level`.
+
+`build` = by hand: click the holds in climbing order, Enter saves. Each command prints the route's name (r1, r2, ...). `python ascent.py list` shows them all.
+
+**3. Show it on the wall, with the phone moving**
+
+```
+python ascent.py live --wall prop --route r1 --camera 1
+```
+
+Move the phone anywhere in range - at least 2 markers in view. **f** = full screen for the projector, **n** = next route, **g** = new route (add `--height 30 --train reach` so g makes puppet routes), **q** = quit.
+
+**4. The puppet climbs, with sounds**
+
+```
+python ascent.py track --wall prop --route r1 --camera 1 --sticker green
+```
+
+- **Click on a sticker** in the window once: that teaches the exact colour under your light. **d** shows what counts as sticker (amber) - only the stickers should light up.
+- A sticker that stays on a hold for half a second is a touch: a **high beep** for the next hold in order, a **low buzz** for a hold that is not on the route, a tune at the top. **m** = sound on/off, **q** = stop and see the result.
+- Nothing counts and nothing is drawn while the wall isn't matched.
+
+## Phone as camera through the browser (`serve`, not used in the demo)
 
 The laptop does the work; the phone is the camera and the screen. Install once (it only makes the certificate): `pip install cryptography`.
 
@@ -95,11 +147,11 @@ The laptop does the work; the phone is the camera and the screen. Install once (
 python ascent.py serve
 ```
 
-It prints one link like `https://192.168.1.23:8443/?code=k7mz2p`: a start page with three buttons (See a route, Scan a wall, Record my try). Type the whole link into the phone's browser (Safari on iPhone, Chrome on Android) - the code is part of it, and without it the page says "Ask for the link with the code". A new code is made every time you start `serve`; `--code` sets your own.
+It prints **one link** like `https://192.168.1.23:8443/?code=k7mz2p`. Type the whole link into the phone's browser (Safari on iPhone, Chrome on Android) - the code is part of it, and without it the page says "Ask for the link with the code". A new code is made every time you start `serve`; `--code` sets your own. It is one page with three tabs at the top:
 
-- **/scan** - scan a wall with the phone: name it, **Take photo** (the camera opens inside the page; whole wall in frame, then **Capture**), tap the 4 corners, type width and height in cm (or leave the width empty to skip), tap every hold and its type, **Save wall**. Same result as `python ascent.py scan`, versions included: scanning an existing wall again makes a new version and archives the old one. Small holds: turn the phone sideways and pinch to zoom.
-- **/track** - record my try from the phone: pick wall and route, optionally your name (then the result goes into your logbook), tap **Start camera and sound**, put the phone 3-4 m back. The phone beeps; **Finish** shows the camera's guess, **Try again** starts over. Needs MediaPipe on the laptop (see "Record my try" below); without it the page says so.
-- **/live** - pick wall and route, tap **Start camera**, point at the wall. Rings appear only while the wall is matched. **New route** = the `g` key, **Next route** = `n`. Hold the phone sideways to fit a whole wall.
+- **Scan a wall** - name the wall, tap **Take photo**: the camera opens inside the page and shows the whole frame; fit the wall and tap **Take photo** again. (Or **Choose a photo** from the gallery.) Then tap the 4 corners, type width and height in cm (or leave the width empty to skip), tap every hold and its type, **Save wall**. Same result as `python ascent.py scan`, versions included: scanning an existing wall again makes a new version and archives the old one. Small holds: turn the phone sideways and pinch to zoom. **See routes on it** jumps to the first tab with the new wall picked.
+- **Record my try** - from the phone: pick wall and route, optionally your name (then the result goes into your logbook), tap **Start camera and sound**, put the phone 3-4 m back. The phone beeps; **Finish** shows the camera's guess, **Try again** starts over. Needs MediaPipe on the laptop (see "Record my try" below); without it the page says so.
+- **See a route** - pick wall and route, tap **Start camera**, point at the wall. Rings appear only while the wall is matched. **New route** = the `g` key, **Next route** = `n`. Hold the phone sideways to fit a whole wall.
 
 ### Connecting phone and laptop
 
@@ -110,7 +162,7 @@ It prints one link like `https://192.168.1.23:8443/?code=k7mz2p`: a start page w
    - **Android (Chrome):** "Your connection is not private" > **Advanced** > **Proceed to 192.168.x.x (unsafe)**. Then **Allow** the camera.
 4. **Windows firewall.** The first time `serve` runs, Windows asks whether Python may communicate on networks: tick **Private networks** and click **Allow access**. The network itself must be marked Private: Settings > Network & internet > Wi-Fi > your network > Network profile type > **Private** (do the same for the phone's hotspot). If you clicked Cancel earlier: Control Panel > Windows Defender Firewall > **Allow an app or feature through Windows Defender Firewall** > Change settings > tick **Private** next to Python (python.exe; add it with "Allow another app" if missing) > OK. On a Mac, click **Allow** when asked about incoming connections.
 
-**Still nothing?** Check the address matches what `serve` printed now (IPs change between networks), that nothing else uses port 8443 (`--port 9443`), and try the hotspot. Frames are processed in memory on the laptop and never saved. If the phone is silent on /track: check the ring/silent switch (iPhone) and the media volume.
+**Still nothing?** Check the address matches what `serve` printed now (IPs change between networks), that nothing else uses port 8443 (`--port 9443`), and try the hotspot. Frames are processed in memory on the laptop and never saved. If the phone is silent on Record my try: check the ring/silent switch (iPhone) and the media volume. **If something goes wrong on the phone**, an amber box shows the error, and the same error is printed in the laptop's terminal as `Phone error: ...` - paste that line to whoever fixes it.
 
 ## Record my try (motion tracking with sounds)
 

@@ -6,10 +6,10 @@ Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a
 
 | Command | What it does |
 | --- | --- |
-| `serve` | Phone as camera: HTTPS server on 0.0.0.0:8443 (`--port`, `--host`, `--code`), prints the phone links with the laptop's IP and an access code. Pages `/live` (and `/scan`, `/track`, see below). |
+| `serve` | Phone as camera: HTTPS server on 0.0.0.0:8443 (`--port`, `--host`, `--code`), prints one phone link with the laptop's IP and an access code. One page with three tabs: See a route, Scan a wall, Record my try (`#live`, `#scan`, `#track`; the addresses `/live`, `/scan`, `/track` open the same page on that tab). |
 | `selftest` | Builds a synthetic wall, views it from another angle, checks the overlay error. No camera needed. |
-| `scan` | Photo (webcam or `--image`) → click 4 corners → type real size in cm (or pass `--width` / `--height` in cm to skip the questions) → click and tag every hold → save. `--markers` finds the corners from printed markers instead. |
-| `generate` | Rules-based route; `--train`, `--moves`, `--height`, `--level`, `--seed`, `--preview`, `--by NAME` (who set it, optional). |
+| `scan` | Photo (webcam or `--image`) → click 4 corners → type real size in cm (or pass `--width` / `--height` in cm to skip the questions) → click and tag every hold → save. `--markers` finds the corners from printed markers instead. `--auto` finds the holds automatically and shows them for checking (click a ring = remove, click elsewhere = add, u = undo); without it, every hold is clicked by hand as before. |
+| `generate` | Rules-based route; `--train`, `--moves`, `--height`, `--level`, `--seed`, `--preview`, `--by NAME` (who set it, optional), `--colour red[,blue]` (only holds of those colours, from `scan --auto`; the colours are added to the route's `train` tags). |
 | `build` | Click holds in order on the photo; warns about moves past reach. `--by NAME` optional. |
 | `live` | Route on the live camera. Keys: g new route, n next, f full screen, s screenshot, v record, q quit. `--video` replays a file instead of the webcam. |
 | `preview` | Route drawn on the saved photo — the no-camera backup. |
@@ -49,6 +49,7 @@ walls/<wall>/
 - `corners_px` are ordered top-left, top-right, bottom-right, bottom-left, in photo pixels.
 - Hold `cm` coordinates: x to the right, **y upwards**, origin at the bottom-left corner.
 - `type` is one of jug, crimp, sloper, pinch, pocket, or null.
+- `colour` (from `scan --auto`, optional): red, orange, yellow, green, blue, purple, pink, black, white or grey.
 - `markers_px` exists only in markers mode.
 
 **route json**
@@ -112,6 +113,17 @@ Routes may also have `"by": "max"` (who set them, from `--by`); older routes wit
 - Names become file names: lower case, spaces to `_`, umlauts to ae/oe/ue/ss, other characters dropped.
 - **"N people climbed this"** = number of different climbers with a `sent` entry for that route on that wall version.
 
+## Automatic hold detection (`scan --auto`)
+
+Rules, no AI; made for a **plain, single-colour board with coloured holds** (the prop wall).
+
+- Works on a copy of the photo at most 900 px, only **inside the four corners** with a margin of 1.5% of the wall's width (the board's edge and the corners are never holds), and never on the printed markers.
+- **The board's colour around every point** = a large median filter (a sixth of the wall's width) of the photo in Lab colour, with everything outside the wall painted in the board's colour first. A pixel belongs to a hold when it differs from that by more than max(22, median + 4 robust deviations). This copes with uneven light.
+- **Blobs** after a little clean-up count as holds when they are at least 1.2% of the wall's width across (smaller: bolt holes, specks), at most 3% of the wall's area, not long and thin (tape, seams), and not ragged (shadows, chalk).
+- **Colour name** per hold (red, orange, yellow, green, blue, purple, pink, black, white, grey) from its median hue, saturation and brightness, saved as `"colour"` in `wall.json` (an extra field; older scans without it still load).
+- **Always checked by a person:** the review window shows every found hold; that is also the fallback - if nothing is found, it is the old click-every-hold window.
+- On the synthetic test walls: 26 of 26 holds, no false ones; under a strong light gradient 25 of 26.
+
 ## Geometry
 
 - **Rectification:** the four corners and the real width and height give a perspective transform from photo pixels to wall centimetres. Every hold gets both coordinates at scan time.
@@ -134,19 +146,27 @@ Routes may also have `"by": "max"` (who set them, from `--by`); older routes wit
 
 ## Phone as camera (`serve`)
 
-- **Standard library only:** `http.server.ThreadingHTTPServer` + `ssl` + `threading`. Pages are plain HTML/JS in `web/` (`common.js` is shared). No framework, no build step.
+- **Standard library only:** `http.server.ThreadingHTTPServer` + `ssl` + `threading`. One plain HTML page, `web/index.html`, with three tabs; each tab's code is its own plain script (`live.js`, `scan.js`, `track.js`, sharing `common.js`). Leaving a tab stops its camera. No framework, no build step.
+- **Errors are reported:** any JavaScript error or failed promise shows in an amber box on the phone and is sent to `POST /api/log`, which prints it in the laptop's terminal as `Phone error (#tab): ...` with the phone's browser name.
 - **Certificate:** self-signed, made on first run with the optional `cryptography` package, in `tls/` (out of git - it holds a private key). It names `localhost`, `127.0.0.1` and the laptop's LAN IPs, and is remade when the laptop gets an IP it doesn't name (e.g. on the phone's hotspot); the phone then warns once more.
 - **Access code:** 6 random characters per run (or `--code`), in the link printed on the laptop. Pages and API calls need it, either in the URL or in the cookie the first page sets (`Secure; HttpOnly; SameSite=Strict`). Only `web/*.js` and `web/*.css` load without it; they hold no data. Other people on the Wi-Fi get "Ask for the link with the code".
 - **Live loop:** the phone's back camera fills the screen (`object-fit: cover`); at most 8 times a second, with one request in flight, it sends a JPEG of the current frame (long side 800 px, quality 0.7) to `POST /api/frame?sid=...`. The laptop runs the same `Tracker` and smoothing as `live` and answers either `{"state": "locked", "rings": [{"x", "y", "n", "kind"}], "radius", "w", "h"}` in frame pixels, or `{"state": "far" | "close" | "lost", "message"}` (after 9 s without lock: "Has it been reset?"). The phone maps frame pixels to the screen and draws the haloed, numbered rings on a canvas over the video.
 - **Never guess on the phone either:** rings are drawn only for a `locked` answer, and the canvas is cleared when no answer arrived for 0.6 s.
 - **Latency:** the rings belong to the frame sent ~100-200 ms earlier, so they trail a moving phone slightly; held still, they settle on the holds.
 - **API:** `GET /api/walls` (walls and routes); `POST /api/live/start` `{wall, route?, train?, level?, moves?, height?}` → session id and route info; `POST /api/frame?sid=`; `POST /api/route/new?sid=` (like **g**) and `/api/route/next?sid=` (like **n**). Sessions expire after 15 idle minutes, at most 8 at once.
-- **/scan:** the photo is taken with `<input type=file capture=environment>` (full camera quality) or chosen from the gallery; the phone turns it upright and downscales it to at most 1600 px, so the laptop gets exactly the image that was tapped on. Then: tap 4 corners in any order (or "use the printed markers": `POST /api/scan/markers` finds them), width and height in cm (width empty = 300 cm assumed; height empty = from the photo's proportions, as in the CLI), tap holds and tag types. `POST /api/scan` `{wall, image, markers, corners, width, height, holds: [{px, type}]}` checks everything first (4 corners forming a convex shape, taps inside the photo, known hold types, at least one hold, enough markers) and then calls `save_scan` - the same function the CLI `scan` uses - so `wall.json`, `ref.jpg` and versioning are identical. Nothing is archived when a check fails. The page asks before making version N+1 of an existing wall.
+- **Scan tab:** the photo is taken **inside the page** from the same camera stream as the live view (1920x1080 requested, preview shows the whole frame), so the phone never switches to its camera app - on some phones that switch reloads the page and loses the photo. **Choose a photo** (gallery) is the backup; it is decoded upright by the browser, with a plain fallback if that takes over 5 s. Either way the picture is downscaled to at most 1600 px, so the laptop gets exactly the image that was tapped on. Then: tap 4 corners in any order (or "use the printed markers": `POST /api/scan/markers` finds them), width and height in cm (width empty = 300 cm assumed; height empty = from the photo's proportions, as in the CLI), tap holds and tag types. `POST /api/scan` `{wall, image, markers, corners, width, height, holds: [{px, type}]}` checks everything first (4 corners forming a convex shape, taps inside the photo, known hold types, at least one hold, enough markers) and then calls `save_scan` - the same function the CLI `scan` uses - so `wall.json`, `ref.jpg` and versioning are identical. Nothing is archived when a check fails. The page asks before making version N+1 of an existing wall.
 - **/track:** like `/live`, plus `POST /api/track/start` `{wall, route, climber?}` makes a session with its own MediaPipe detector and `AttemptWatcher` (the same touch rule as the CLI `track`). Each frame carries the phone's capture time (`&t=` seconds); when locked, the laptop finds the hands, maps them into wall centimetres and answers with `hands` (to draw), `next`/`of` and `events` [`{sound: good|order|off|top, message}`]; the phone plays the same four tones with Web Audio (switched on by the Start tap, as iPhones require). Not locked: no hands, no events. `POST /api/track/finish` returns the camera's guess and, with a climber name, saves it in their logbook (counts only) and finishes any challenge it completes; `/api/track/reset` = Try again. The safety card comes with the start answer the first time a climber opens the wall. Without MediaPipe on the laptop the page shows "track needs MediaPipe" and the server keeps running. Old sessions release their MediaPipe detector.
 - **TLS handshake** happens in each request's thread (`do_handshake_on_connect=False`) with a 30 s timeout, so a silent or refusing phone can't stall others; dropped connections and refused certificates don't print tracebacks.
 - **Safety of the server:** wall and route names from the phone must be letters, digits, `-`, `_`; only files listed in `web/` are served; uploads are capped at 25 MB; the CLI helpers' error exits become a 400 with the message, so the server stays up.
 
 ## Motion tracking (`track`)
+
+**Default since 6 Nov: touch tracking by sticker colour, no AI** (`--touch sticker`). For the demo a puppet (or a fingertip) wears a bright sticker on each hand; MediaPipe stays available with `--touch pose`.
+
+- **Sticker detector:** HSV colour range (`--sticker green|pink|orange|yellow|blue|red`, or click the sticker in the window to learn its exact colour), small noise removed, only inside the locked wall (a little margin around it), blobs from 10 px up to 3% of the wall's area, the 2 largest. Each sticker keeps its name from frame to frame (nearest to where it was).
+- **Same-colour holds are ignored:** pixels of the sticker colour in the scan photo are warped into the frame and removed, so an orange hold is never mistaken for an orange sticker. The flip side: a sticker on a hold of its own colour is invisible. **Choose a sticker colour that no hold has.** Key `d` shows what counts as sticker.
+- **Touch rule:** a sticker within the touch distance of a hold's centre for 0.5 s (`--dwell`). The touch distance is 45% of the usual gap between neighbouring holds, at most 12 cm (`--touch-cm` to set it) - small on a prop wall, so one touch can't land on two holds. Two stickers arriving in the same moment count in climbing order.
+- Sounds, order rules, "never draw / count without a lock", the result and `--climber` are the same as below.
 
 - **Pose:** MediaPipe Pose, imported only inside `track`, so every other command works without it. Supports the old `mediapipe.solutions` API and the newer Tasks API (MediaPipe 1.x), which needs `models/pose_landmarker_lite.task` (5.5 MB, downloaded once on first use, kept out of git; `--pose-model FILE` to use a copy).
 - **Hands only.** A hand's position is the mean of wrist, index and pinky landmarks (visibility > 0.5). Feet are free, as for generated routes.
@@ -170,6 +190,7 @@ Settings come from the options, else the climber's profile (`profiles/<name>.jso
 ## Route generator (rules, no AI)
 
 - **Reach** = 0.55 × climber height (95 cm for 172 cm). No move may exceed it.
+- **Fixed minimums** (a move at least 15 cm, at least 5 cm up or sideways) are for people. Below 120 cm - a puppet or a small child on a prop wall - they scale with height (× height / 172), so a 30 cm puppet gets moves of 2.6 cm and more within its 16.5 cm reach. People's routes are unchanged.
 - **Target move length** by level: easy 0.30, medium 0.40, hard 0.50 × height. Candidates are weighted by a Gaussian around the target.
 - **Normal routes:** start in the bottom 35 % of the wall, every move goes up at least 5 cm, finish in the top 30 %.
 - **Traverse:** start in the left or right 30 %, move sideways towards the other side, vertical change under 0.35 × height.
@@ -181,7 +202,7 @@ Settings come from the options, else the climber's profile (`profiles/<name>.jso
 ## Tests
 
 - `python ascent.py selftest` — install check, overlay error on a synthetic warped wall.
-- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed), profiles (minors, health data, delete one person), safety card once per wall, route filters, challenges (sent or tried finishes it, minors, decline, delete), `serve` + `/live` over real HTTPS with synthetic phone frames (access code, no path escapes, lock, ring accuracy in cm, no rings when lost or far, new/next route, bad requests, certificate reuse), `/scan` (same wall.json and cm as the CLI, versioning and archiving, markers, nine kinds of bad scan refused with nothing saved), `/track` with a scripted hand (sounds, off-route, no lock, Finish into the logbook, safety card once, missing MediaPipe, sessions released), a silent connection not blocking others. 114 checks, plus one that runs the real MediaPipe model when it is installed.
+- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), sticker tracking on a synthetic video (sounds, two stickers, no lock, same-colour holds ignored, click to learn the colour, markers wall), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed), profiles (minors, health data, delete one person), safety card once per wall, route filters, challenges (sent or tried finishes it, minors, decline, delete), `serve` + `/live` over real HTTPS with synthetic phone frames (access code, no path escapes, lock, ring accuracy in cm, no rings when lost or far, new/next route, bad requests, certificate reuse), `/scan` (same wall.json and cm as the CLI, versioning and archiving, markers, nine kinds of bad scan refused with nothing saved), `/track` with a scripted hand (sounds, off-route, no lock, Finish into the logbook, safety card once, missing MediaPipe, sessions released), a silent connection not blocking others, the one page with three tabs, phone errors printed on the laptop. 131 checks, plus one that runs the real MediaPipe model when it is installed.
 
 **Not covered:** a real webcam, real windows on Windows, the real panel under venue light.
 

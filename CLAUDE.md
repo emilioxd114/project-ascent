@@ -76,4 +76,5 @@ Read the relevant doc before changing behaviour. When a decision changes, update
 - Photo matching may fail on low-texture walls — use `--markers`.
 - Flat walls only; partial resets (a few holds moved) aren't detected.
 - Logbook, profiles, progress, recommendations, routes filters, safety card and challenges (6 Nov) are local-only: personal data in `logbook/`, `profiles/`, `challenges/`, all out of git. Sharing between people still needs the server.
-- Motion tracking with audio feedback (`track`) is a minimal first version, not yet tested with a real person or the mannequin, and has no owner yet (`docs/08-status-and-next.md`).
+- Motion tracking with audio feedback (`track`) is a minimal first version: by sticker colour (default, for the puppet demo) or MediaPipe (`--touch pose`). Not yet tested with the real puppet, the prop wall or a real person; no owner yet (`docs/08-status-and-next.md`).
+- Demo setup (6 Nov): the phone is a webcam for the laptop (Camo/DroidCam, `--camera 1`); the phone web pages from `serve` are kept but not used.

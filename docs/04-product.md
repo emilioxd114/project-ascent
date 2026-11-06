@@ -38,7 +38,7 @@ Mapping a custom wall is the real bottleneck: if it takes a route setter an hour
 
 1. **Map the route, not the wall** — tap only the 8 holds of a route instead of all 200. Dissolves the problem for casual use.
 2. **Tap one blue hold, get all the blue ones** — colour sets select at once.
-3. **Detect, then correct** — colour segmentation finds most holds on a plain wall; the person fixes mistakes.
+3. **Detect, then correct** — colour segmentation finds most holds on a plain wall; the person fixes mistakes. **Built on 6 Nov for the prop wall** (`scan --auto`).
 4. **Point instead of tap** — a crosshair registers the hold under it after half a second.
 5. **Touch the holds** — someone walks along touching each hold while the camera watches; body tracking registers it.
 6. **Everyone does a little** — each user adds a few holds; the map completes over a week.
@@ -87,7 +87,7 @@ Notes from the project: of these, ArtRock's brief only asks for accounts and a s
 
 ### Not assigned to any group
 
-**Motion tracking with audio feedback** — the concept paper's "premier discipline" — was not owned by any group during the event. The entry point exists ("Record my try" on the overlay screen) and the test rig includes a wooden mannequin for exactly this. Given ClimbAI, the recommended scope is minimal: detect which hold a hand is on, and play a sound for right or wrong order. **Built on 6 Nov as exactly that** (`python ascent.py track`, see 06-architecture.md); deep movement analysis stays with a partner.
+**Motion tracking with audio feedback** — the concept paper's "premier discipline" — was not owned by any group during the event. The entry point exists ("Record my try" on the overlay screen) and the test rig includes a wooden mannequin for exactly this. Given ClimbAI, the recommended scope is minimal: detect which hold a hand is on, and play a sound for right or wrong order. **Built on 6 Nov as exactly that** (`python ascent.py track`, see 06-architecture.md); deep movement analysis stays with a partner. For the demo the "climber" is a small puppet with a coloured sticker on each hand, moved over the prop wall: MediaPipe is trained on people and would track the operator's hand, while a sticker colour is simple and reliable.
 
 ## The 22 ideas from the brainstorm
 
@@ -111,7 +111,7 @@ The team's sticky-note board, triaged for the hackathon:
 
 ## Roadmap
 
-- **Now (hackathon):** laptop prototype on the test panel — scan, generate, build, live overlay; clickable design of the phone app. Since 6 Nov the phone can be the camera: `serve` runs a local HTTPS server on the laptop, and phone pages (`/live`, `/scan`, `/track`) send camera frames to it.
+- **Now (hackathon):** laptop prototype on the test panel — scan, generate, build, live overlay; clickable design of the phone app. Since 6 Nov the phone can be the camera: `serve` runs a local HTTPS server on the laptop, and one phone page with three tabs (See a route, Scan a wall, Record my try) sends camera frames to it.
 - **Phase 1:** phone app for Lena's journey; accounts and a shared route database; duplicate walls merged by gym and location.
 - **Phase 2 — Max:** creating and sharing routes outdoors, offline mode, youth-safe gamification, parental consent.
 - **Phase 2 — Laura:** therapist dashboard, prescribed routes, session documentation.
