@@ -330,6 +330,44 @@ def rehearse_profile():
           ascent.load_profile("max") is None and not os.path.exists("logbook/max.json") and "by" not in j1)
 
 
+def rehearse_routes():
+    """Safety card once per climber and wall; the route list with filters."""
+    base = dict(wall="tw", train="", grade=None, holds=None, made_by=None, by=None, climber=None, new=False,
+                within_reach=False, height=None, level=None, goal=None)
+    rows = lambda **kw: ascent.filter_routes(ascent.load_wall("tw")[0], SimpleNamespace(**{**base, **kw}),
+                                             kw.get("climber"), kw.get("height"))
+    names = lambda **kw: sorted(r["name"] for r, *_ in rows(**kw))
+    every = names()
+    check("routes: no filter lists every route on this version", len(every) == len(ascent.route_names("tw")))
+    jug = names(train="jug")
+    check("routes: --train keeps routes with that skill", "j1" in jug and all(
+        "jug" in sk for *_, sk in rows(train="jug")))
+    g = ascent.grade_range("5a-6a")
+    check("routes: --grade range", all(5 >= ascent.GRADES.index(r["estimated_grade"][1:]) >= 1
+                                       for r, *_ in rows(grade=g)) and g == (1, 4))
+    check("routes: --made-by built", names(made_by="built") == ["t1"])
+    check("routes: --by", names(by="nora") and all(r.get("by") == "nora" for r, *_ in rows(by="nora")))
+    check("routes: --new hides what the climber has sent", "t1" in every and "t1" not in names(climber="lena",
+                                                                                                 new=True))
+    tall, short = names(within_reach=True, height=230.0), names(within_reach=True, height=60.0)
+    check("routes: --within-reach depends on height", len(short) < len(tall), f"{len(short)} vs {len(tall)} of {every}")
+    r, people, me, _ = [x for x in rows(climber="lena") if x[0]["name"] == "t1"][0]
+    check("routes: N climbed and your result", "lena" in people and me == "sent",
+          f"{people} {me}")
+    out = quiet(ascent.cmd_routes, SimpleNamespace(**{**base, "climber": "lena"}))
+    again = quiet(ascent.cmd_routes, SimpleNamespace(**{**base, "climber": "lena"}))
+    check("safety card the first time a climber opens a wall, in their language",
+          "SICHERHEIT" in out and "SICHERHEIT" not in again and "climbed" in again)
+    out = quiet(ascent.cmd_safety, SimpleNamespace(climber=None, language=None))
+    check("safety card is ASCII and short", out.isascii() and len(out.splitlines()) <= 12)
+    try:
+        ascent.grade_range("9z")
+        bad = False
+    except ascent.argparse.ArgumentTypeError:
+        bad = True
+    check("routes: a wrong grade is refused", bad)
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -507,6 +545,7 @@ def main():
         rehearse_log()
         rehearse_progress()
         rehearse_profile()
+        rehearse_routes()
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

@@ -16,6 +16,8 @@ Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a
 | `track` | "Record my try": the route on the live camera plus MediaPipe hand tracking; a sound for each hold reached in order, an alert for an off-route or out-of-order hold. Keys: m sound on/off, q stop. `--video`, `--mute`, `--touch-cm`, `--pose-model`. Needs `pip install mediapipe`. `--climber NAME` saves the camera's guess in the logbook. |
 | `log` | Logbook. `log --climber lena --wall panel --route r1 --result sent\|tried\|fail [--note ...] [--date YYYY-MM-DD]` adds a climb; `log --climber lena` shows the history; `--undo` removes the last entry. |
 | `profile` | `--climber NAME` with `--goal --level --height --language --visibility --minor/--adult --parental-consent`, rehab: `--therapist --rehab-level --sessions-per-week`. Only given fields change. No `--climber`: list profiles. `--delete` shows what would be deleted, `--delete --yes` deletes it. |
+| `safety` | The safety card, `--language en\|de` or the climber's language. |
+| `routes` | The route list with filters: `--train`, `--grade 6a\|5a-6a`, `--holds 4-6`, `--made-by generated\|built`, `--by NAME`; with `--climber NAME`: your result per route, `--new` (not sent yet), `--within-reach` (no move past 0.55 × your height). Shows "N climbed". |
 | `progress` | `--climber NAME [--goal train\|play\|rehab]`: counts, then skills (train), level (play) or sessions per week (rehab), then milestones. |
 | `recommend` | `--climber NAME --wall W [--height --level --goal] [--make N]`: what to climb next, every line with its reason; `--make` generates N routes set by the climber. |
 
@@ -71,6 +73,7 @@ The first hold is the start (green), the last the finish (red), the rest the mid
 - **Age group, not birth date** (`minor`), to store the minimum.
 - **Visibility** private / friends / public, private by default. A minor can't be public, and needs `parental_consent` for friends. Sharing isn't built (it needs a server); the rules exist first, as 07-legal-and-safety.md asks.
 - **`rehab`** is health data: only the therapist's settings, no diagnosis, always private whatever `visibility` says, removed when the goal stops being rehab. A rehab level always wins over `level`.
+- `safety_seen`: walls on which this climber has seen the safety card. `routes --climber` and `track --climber` show it the first time on each wall, in the profile's language; without a profile it is shown every time. `live` is unchanged, so it does not show the card (yet).
 - **Delete one person:** removes their profile and logbook, and removes `by` from routes they set (the routes stay, anonymous).
 
 Routes may also have `"by": "max"` (who set them, from `--by`); older routes without it still load.
@@ -147,7 +150,7 @@ Settings come from the options, else the climber's profile (`profiles/<name>.jso
 ## Tests
 
 - `python ascent.py selftest` — install check, overlay error on a synthetic warped wall.
-- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed), profiles (minors, health data, delete one person). 56 checks, plus one that runs the real MediaPipe model when it is installed.
+- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed), profiles (minors, health data, delete one person), safety card once per wall, route filters. 67 checks, plus one that runs the real MediaPipe model when it is installed.
 
 **Not covered:** a real webcam, real windows on Windows, the real panel under venue light.
 

@@ -17,6 +17,8 @@ Commands
   python ascent.py track --wall panel --route r1    record my try: hand tracking with sounds (needs mediapipe)
   python ascent.py log --climber lena --wall panel --route r1 --result sent    log a climb (sent/tried/fail)
   python ascent.py log --climber lena               show Lena's logbook
+  python ascent.py routes --wall panel --train sloper --grade 5a-6a --climber lena --new   filtered list
+  python ascent.py safety                           the safety card (--language de)
   python ascent.py profile --climber lena --goal train --level medium --height 165   sign-up details
   python ascent.py progress --climber lena          stats, skills / level / rehab sessions, milestones
   python ascent.py recommend --climber lena --wall panel --make 3    what to train next, by rules
@@ -1377,6 +1379,136 @@ def cmd_profile(args):
         print("  (Sharing needs a server and is not built yet - this setting is stored for later.)")
 
 
+# ---------------------------------------------------------------- safety card and route list with filters
+
+SAFETY_CARD = {
+    "en": ["SAFETY - read once, 20 seconds",
+           "1. Crash pad under the whole route. No bags, phones or tripods on the landing zone.",
+           "2. A ring not sitting on its hold? Stop - the wall may have been reset.",
+           "3. Warm up on easy routes first. Grades are estimates (~). Stop if something hurts.",
+           "4. Generated routes keep every move within reach. That is not a promise they are safe.",
+           "5. Fall with bent knees and roll back. Don't catch yourself with straight arms.",
+           "6. Climb with someone nearby. Under 18: always with an adult or a spotter.",
+           "7. Rehab: follow your therapist, not the app. It never judges whether a movement is safe."],
+    "de": ["SICHERHEIT - einmal lesen, 20 Sekunden",
+           "1. Matte unter die ganze Route. Keine Taschen, Handys oder Stative im Landebereich.",
+           "2. Ein Ring sitzt nicht auf seinem Griff? Aufhoeren - die Wand wurde vielleicht umgeschraubt.",
+           "3. Zuerst an leichten Routen aufwaermen. Grade sind Schaetzungen (~). Bei Schmerz aufhoeren.",
+           "4. Generierte Routen halten jeden Zug in Reichweite. Das heisst nicht, dass sie sicher sind.",
+           "5. Mit gebeugten Knien fallen und abrollen. Nicht mit gestreckten Armen abfangen.",
+           "6. Klettere nicht allein. Unter 18: immer mit einer erwachsenen Person oder Spotter.",
+           "7. Reha: Folge deiner Therapeutin oder deinem Therapeuten, nicht der App.",
+           "   Sie beurteilt nie, ob eine Bewegung sicher ist."],
+}
+
+
+def print_safety_card(language="en"):
+    lines = SAFETY_CARD.get(language, SAFETY_CARD["en"])
+    width = max(len(line) for line in lines)
+    print("+" + "-" * (width + 2) + "+")
+    for line in lines:
+        print(f"| {line:<{width}} |")
+    print("+" + "-" * (width + 2) + "+")
+
+
+def safety_once(climber, wall_name):
+    """The card is shown the first time a climber opens a wall - a short card, not a page nobody reads.
+    Remembered in the profile; without a profile it is shown every time."""
+    prof = load_profile(climber) if climber else None
+    if prof and wall_name in prof.get("safety_seen", []):
+        return False
+    print_safety_card((prof or {}).get("language", "en"))
+    if prof:
+        prof.setdefault("safety_seen", []).append(wall_name)
+        save_json(profile_path(climber), prof)
+    return True
+
+
+def cmd_safety(args):
+    lang = args.language or ((load_profile(args.climber) or {}).get("language") if args.climber else None) or "en"
+    print_safety_card(lang)
+
+
+def grade_range(text):
+    """'6a' or '5a-6a' -> (low index, high index) in GRADES. '~' is ignored."""
+    parts = [p.strip().lstrip("~").lower() for p in text.split("-")]
+    if len(parts) > 2 or any(p not in GRADES for p in parts):
+        raise argparse.ArgumentTypeError(f"use grades from {', '.join(GRADES)}, e.g. 6a or 5a-6a")
+    lo, hi = GRADES.index(parts[0]), GRADES.index(parts[-1])
+    return min(lo, hi), max(lo, hi)
+
+
+def count_range(text):
+    parts = text.split("-")
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        raise argparse.ArgumentTypeError("use a number or a range, e.g. 6 or 4-6")
+    if len(nums) > 2:
+        raise argparse.ArgumentTypeError("use a number or a range, e.g. 6 or 4-6")
+    return min(nums), max(nums)
+
+
+def filter_routes(wall, args, climber=None, height=None):
+    """The boulder list with filters. Returns (route, people who sent it, my result) for each match."""
+    types = {h["id"]: h.get("type") for h in wall["holds"]}
+    mine = {}
+    if climber:
+        for e in load_log(climber)["entries"]:
+            if e["wall"] == wall["name"] and e["wall_version"] == wall["version"]:
+                best = mine.get(e["route"])
+                if best is None or RESULTS.index(e["result"]) < RESULTS.index(best):
+                    mine[e["route"]] = e["result"]
+    out = []
+    for name in route_names(wall["name"]):
+        r = load_route(wall["name"], name)
+        if r.get("wall_version", wall["version"]) != wall["version"]:
+            continue
+        g = (r.get("estimated_grade") or "?").lstrip("~")
+        skills = set(r.get("train") or []) | {types.get(i) for i in r["holds"] if types.get(i)}
+        if args.train and not set(parse_train(args.train)) <= skills:
+            continue
+        if args.grade and (g not in GRADES or not args.grade[0] <= GRADES.index(g) <= args.grade[1]):
+            continue
+        if args.holds and not args.holds[0] <= len(r["holds"]) <= args.holds[1]:
+            continue
+        if args.made_by and r.get("made_by") != args.made_by:
+            continue
+        if args.by and r.get("by") != climber_id(args.by):
+            continue
+        if args.new and mine.get(name) == "sent":
+            continue
+        if args.within_reach and any("past your reach" in w for w in route_warnings(wall, r["holds"], height)):
+            continue
+        out.append((r, climbed_by(wall["name"], wall["version"], name), mine.get(name), sorted(skills)))
+    return out
+
+
+def cmd_routes(args):
+    wall, _ = load_wall(args.wall)
+    climber = climber_id(args.climber) if args.climber else None
+    if (args.new or args.within_reach) and not climber and not (args.within_reach and args.height):
+        sys.exit("--new and --within-reach need --climber NAME (or --height for --within-reach).")
+    height = args.height or (climber_settings(args)["height"] if climber else None)
+    if climber:
+        safety_once(climber, wall["name"])
+    rows = filter_routes(wall, args, climber, height)
+    total = len(route_names(wall["name"]))
+    print(f"{wall['name']} version {wall['version']}: {len(rows)} of {total} routes match")
+    for r, people, me, skills in rows:
+        who = f" by {r['by']}" if r.get("by") else ""
+        you = f"  you: {me}" if me else ""
+        warn = "  !" if any("past" in w for w in r.get("warnings", [])) else ""
+        print(f"  {r['name']:<6} {r.get('estimated_grade', '?'):<4} {len(r['holds'])} holds  "
+              f"{', '.join(skills) or '-':<28} {r.get('made_by', '')}{who}  "
+              f"{len(people)} climbed{you}{warn}")
+    if rows:
+        print(f"Climb one: python ascent.py live --wall {wall['name']} --route {rows[0][0]['name']}")
+    elif total:
+        print("No route matches. Try fewer filters, or make one: python ascent.py generate --wall "
+              f"{wall['name']}" + (f" --train {args.train}" if args.train else ""))
+
+
 # ---------------------------------------------------------------- motion tracking with audio
 
 POSE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
@@ -1580,6 +1712,8 @@ def run_track(args):
     px = {h["id"]: h["px"] for h in wall["holds"]}
     ref_pts = np.array([px[i] for i in route["holds"]], dtype=np.float32)
     R = rectify_matrix(wall["corners_px"], wall["size_cm"]["w"], wall["size_cm"]["h"])
+    if getattr(args, "climber", None):
+        safety_once(climber_id(args.climber), wall["name"])
     print("Record my try: put the camera 3-4 m back, whole wall in frame, never on the landing zone.")
     print("Body tracking uses an AI model (MediaPipe Pose) on this laptop. No video is saved and nothing")
     print("leaves the device. It only checks which holds your hands touch - it does not judge whether a")
@@ -1757,6 +1891,22 @@ def main():
     p.add_argument("--delete", action="store_true", help="delete everything stored about this climber")
     p.add_argument("--yes", action="store_true", help="confirm --delete")
 
+    p = sub.add_parser("safety", help="the safety card")
+    p.add_argument("--climber", help="use this climber's language")
+    p.add_argument("--language", choices=LANGUAGES)
+
+    p = sub.add_parser("routes", help="the route list with filters")
+    p.add_argument("--wall", required=True)
+    p.add_argument("--train", default="", help="must train all of these, e.g. sloper or crimp,reach")
+    p.add_argument("--grade", type=grade_range, help="estimated grade, e.g. 6a or 5a-6a")
+    p.add_argument("--holds", type=count_range, help="number of holds, e.g. 6 or 4-6")
+    p.add_argument("--made-by", choices=["generated", "built"])
+    p.add_argument("--by", help="routes set by this climber")
+    p.add_argument("--climber", help="show your results; first time on a wall shows the safety card")
+    p.add_argument("--new", action="store_true", help="only routes the climber hasn't sent")
+    p.add_argument("--within-reach", action="store_true", help="hide routes with a move past the climber's reach")
+    p.add_argument("--height", type=positive_cm, help="climber height for --within-reach; default: profile")
+
     p = sub.add_parser("progress", help="stats, skills, level or rehab sessions, milestones")
     p.add_argument("--climber", required=True)
     p.add_argument("--goal", choices=GOALS, help="train (skills), play (levels), rehab (sessions); default: profile")
@@ -1787,7 +1937,7 @@ def main():
     handler = {"selftest": cmd_selftest, "scan": cmd_scan, "generate": cmd_generate, "build": cmd_build,
                "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track,
                "log": cmd_log, "progress": cmd_progress, "recommend": cmd_recommend,
-               "profile": cmd_profile}[args.cmd]
+               "profile": cmd_profile, "safety": cmd_safety, "routes": cmd_routes}[args.cmd]
     sys.exit(handler(args) or 0)
 
 

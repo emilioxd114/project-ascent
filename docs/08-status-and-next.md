@@ -13,7 +13,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Logbook** (`log`, 6 Nov): route + result (sent / tried / fail) + date, typed or from `track --climber`; "N people climbed this" counted from it. Stored per person under `logbook/`, out of git.
 - **Progress and recommendations** (`progress`, `recommend`, 6 Nov): skills for Lena, levels without grade points for Max, sessions against the therapist's goal for Laura; milestones; rule-based "you rarely climb pinches" recommendations that can generate the routes. `generate` and `build` take an optional `--by`.
 - **Profile** (`profile`, 6 Nov): goal, language, level, height, age group, visibility with stricter rules for minors and health data, therapist-set rehab settings, delete one person from everything. Local files only; accounts still need a server.
-- **Tests:** selftest and the rehearsal (56 checks, 57 with MediaPipe), all passing.
+- **Safety card and route filters** (`safety`, `routes`, 6 Nov): a 7-line card in English or German, shown once per climber and wall; the boulder list filtered by skill, grade, holds, made by, setter, not yet sent, within reach, with "N climbed".
+- **Tests:** selftest and the rehearsal (67 checks, 68 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested
@@ -38,7 +39,7 @@ Status as of the night of 5 Nov 2026, before the final day.
 - Scan the real panel, generate routes, record a demo video.
 - Update the canvas: add a hold-tapping screen, rename "Tap fixed points" to "Tap the four corners", design the Build tab.
 - Done (6 Nov): `scan --width --height` options, so no typing is needed during the scan.
-- Later: GPS wall list, safety card, community grading.
+- Done (6 Nov): safety card (`safety`) and list filters (`routes`). Later: GPS wall list, community grading, the card in `live` (left out on demo day so `live` stays exactly as rehearsed).
 
 ### Group 2 (training and progress)
 

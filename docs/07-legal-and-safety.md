@@ -41,7 +41,7 @@ The app must be **a tool the therapist uses**, never a system that tells a patie
 - **Reach guardrails** stop the generator from proposing moves beyond the climber's reach.
 - **The phone placement** must never be on the landing zone of the crash pad.
 - **Wrong overlays are a safety issue too.** That's why the app draws nothing when unsure.
-- **Safety guidelines** (Group 1 feature): show once, the first time someone opens a wall, as a short card — not a page nobody reads.
+- **Safety guidelines** (Group 1 feature): show once, the first time someone opens a wall, as a short card — not a page nobody reads. Built as `python ascent.py safety` (EN/DE, seven lines), shown automatically by `routes --climber` and `track --climber` the first time on each wall. The text is a hackathon draft and needs review by a climbing instructor before real use.
 
 ## Data ownership
 

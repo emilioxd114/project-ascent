@@ -80,7 +80,7 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations and profiles. 56 checks (57 with MediaPipe installed), all passing.
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations, profiles, safety card and route filters. 67 checks (68 with MediaPipe installed), all passing.
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.
@@ -119,6 +119,16 @@ python ascent.py profile --climber laura --goal rehab --therapist "Dr. Berger" -
 ```
 
 Goal **train** shows skills, **play** shows levels, **rehab** shows sessions against the therapist's goal. Height and level are used by `recommend`. Profiles are private by default; under-18s can't be public and need `--parental-consent` for friends. `profile` alone lists everyone; `profile --climber max --delete --yes` deletes everything stored about Max.
+
+## Route list with filters, and the safety card
+
+```
+python ascent.py routes --wall panel --train sloper --grade 5a-6a
+python ascent.py routes --wall panel --climber lena --new --within-reach
+python ascent.py safety --language de
+```
+
+`routes` shows each route with grade, skills, who made it and how many people climbed it. Filters: `--train`, `--grade`, `--holds 4-6`, `--made-by generated|built`, `--by max`; with `--climber`: your result, `--new` (not sent yet) and `--within-reach`. The first time a climber opens a wall with `--climber`, the safety card appears once. `list` is unchanged.
 
 ## Progress and what to climb next
 
