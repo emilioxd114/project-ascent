@@ -2928,7 +2928,7 @@ def cmd_serve(args):
         print("No network found. Join a Wi-Fi or the phone's hotspot, then start serve again.")
     for ip in ips:
         print(f"  Open on the phone:  https://{ip}:{args.port}/?code={code}")
-    print("One page with three tabs: See a route, Scan a wall, Record my try.")
+    print("One page. Tab Climb does everything: photo, holds found, route by skill, phone down, sounds.")
     print("Errors on the phone are also printed here - paste them to whoever fixes it.")
     print("The phone warns about the certificate the first time - see START_HERE.md. Ctrl+C = stop.")
     try:

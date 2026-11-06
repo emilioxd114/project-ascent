@@ -478,8 +478,8 @@ def rehearse_serve_live(photo):
         check("serve: no code, no page", st == 403)
         st, body, r = phone.request("GET", "/")
         st2, old, _ = phone.request("GET", "/live")
-        check("serve: the code opens the one page (three tabs) and sets a cookie", st == 200
-              and all(b'data-tab="%s"' % t for t in (b"live", b"scan", b"track")) and old == body
+        check("serve: the code opens the one page (four tabs) and sets a cookie", st == 200
+              and all(b'data-tab="%s"' % t in body for t in (b"climb", b"live", b"scan", b"track")) and old == body
               and all(f"web/{f}.js".encode() in body for f in ("common", "live", "scan", "track"))
               and "ascent_code=k3y5ab" in (r.getheader("Set-Cookie") or ""))
         st, _, _ = phone.post("/api/log", {"message": "test error \u00e4", "page": "#scan"})

@@ -51,8 +51,8 @@ select, input { width: 100%; }
 /* ---- one page, three tabs */
 .tabs { position: sticky; top: 0; z-index: 10; display: flex; gap: 4px; padding: 8px 8px 6px;
         padding-top: calc(8px + env(safe-area-inset-top)); background: var(--bg); border-bottom: 1px solid #23282e; }
-.tabs a { flex: 1; text-align: center; padding: 10px 4px; border-radius: 10px; color: var(--grey);
-          text-decoration: none; font-weight: 600; font-size: 15px; }
+.tabs a { flex: 1; text-align: center; padding: 10px 2px; border-radius: 10px; color: var(--grey);
+          text-decoration: none; font-weight: 600; font-size: 14px; }
 .tabs a.on { background: #1d2126; color: var(--text); }
 body.fullcam .tabs { display: none; }
 .view.hidden { display: none; }
@@ -67,9 +67,14 @@ label.check input { width: auto; }
         font-size: 14px; white-space: pre-wrap; }
 .summary { position: absolute; left: 12px; right: 12px; bottom: 90px; background: var(--panel);
            border-radius: 12px; padding: 14px; white-space: pre-wrap; }
-#scan-view { width: 100%; display: block; border-radius: 8px; touch-action: manipulation; background: #000; margin-top: 8px; }
+#scan-view, #flow-view { width: 100%; display: block; border-radius: 8px; touch-action: manipulation; background: #000; margin-top: 8px; }
+#view-climb .page { max-width: none; }
+#view-climb .page > section, #view-climb .page > .error, #view-climb .page > .status { max-width: 640px; }
+#flow-video { object-fit: cover; }
 .types { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
 .types button.on { background: var(--amber); color: #0c0e10; }
+.types.skills { grid-template-columns: repeat(4, 1fr); }
+.types.skills button { padding: 10px 4px; }
 .sticky { position: sticky; bottom: 0; background: var(--bg); padding: 8px 0 calc(8px + env(safe-area-inset-bottom)); }
 #view-scan .page { max-width: none; }
 #view-scan .page > section, #view-scan .page > .error, #view-scan .page > .status { max-width: 640px; }

@@ -127,6 +127,37 @@ const Ascent = (() => {
     return { ctx, map, k };
   }
 
+  // The same four tones as the laptop's 'track' command, made with Web Audio. unlock() must run inside a tap
+  // (iPhones only allow sound after one); play(kind) for good / order / off / top.
+  const TONES = { good: [[880, 0.09], [1320, 0.12]], order: [[520, 0.12], [520, 0.12]],
+                  off: [[220, 0.35]], top: [[660, 0.1], [880, 0.1], [1320, 0.25]] };
+  function makeSounds() {
+    let audio = null, on = true;
+    return {
+      async unlock() {
+        try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); await audio.resume(); }
+        catch (e) { audio = null; }
+      },
+      play(kind) {
+        if (!on || !audio || !TONES[kind]) return;
+        let t = audio.currentTime + 0.01;
+        for (const [f, d] of TONES[kind]) {
+          const o = audio.createOscillator(), g = audio.createGain();
+          o.frequency.value = f; o.type = "sine";
+          g.gain.setValueAtTime(0, t);
+          g.gain.linearRampToValueAtTime(0.5, t + 0.01);
+          g.gain.setValueAtTime(0.5, t + d - 0.01);
+          g.gain.linearRampToValueAtTime(0, t + d);
+          o.connect(g).connect(audio.destination);
+          o.start(t); o.stop(t + d + 0.02);
+          t += d + 0.03;
+        }
+      },
+      toggle() { on = !on; return on; },
+      get on() { return on; },
+    };
+  }
+
   async function keepAwake() {
     try { if (navigator.wakeLock) return await navigator.wakeLock.request("screen"); } catch (e) { /* fine */ }
     return null;
@@ -175,6 +206,6 @@ const Ascent = (() => {
   window.addEventListener("unhandledrejection", e => report(e.reason && e.reason.message ? e.reason.message : e.reason));
 
   return { code, COLORS, url, api, getJSON, startCamera, stopCamera, grabFrame, fitCanvas, frameToScreen,
-           drawRings, ring, keepAwake, sleep, fillWalls, fullscreen, report, views: {} };
+           drawRings, ring, makeSounds, keepAwake, sleep, fillWalls, fullscreen, report, views: {} };
 })();
 

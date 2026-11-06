@@ -9,10 +9,98 @@
 <body>
 <!-- One page, three tabs. The laptop does the vision work; this page is the camera and the screen. -->
 <nav id="tabs" class="tabs">
+  <a href="#climb" data-tab="climb">Climb</a>
   <a href="#live" data-tab="live">See a route</a>
   <a href="#scan" data-tab="scan">Scan a wall</a>
   <a href="#track" data-tab="track">Record my try</a>
 </nav>
+
+<!-- ============================================================ Climb: the whole flow, nothing typed -->
+<section id="view-climb" class="view">
+  <div class="page">
+    <section id="flow-s-start">
+      <h1>Climb</h1>
+      <p class="muted">Photo the wall, let the laptop find the holds, pick a skill, put the phone down and climb.
+        Nothing to type, nothing to measure.</p>
+      <p><button id="flow-new" class="primary wide">New wall: take a photo</button></p>
+      <div id="flow-have" class="hidden">
+        <label for="flow-wall">Or a wall you already scanned</label>
+        <select id="flow-wall"></select>
+        <p><button id="flow-use-wall" class="wide">Make a route on it</button></p>
+      </div>
+      <details><summary class="muted">Options</summary>
+        <label for="flow-name">Wall name (letters, digits, - and _)</label>
+        <input id="flow-name" value="wall" autocapitalize="off" autocomplete="off">
+        <label for="flow-width">Wall width in cm (optional - leave empty)</label>
+        <input id="flow-width" type="number" inputmode="decimal" placeholder="not needed">
+        <label for="flow-sticker">Sticker colour on the fingertip</label>
+        <select id="flow-sticker"><option>green</option><option>pink</option><option>orange</option>
+          <option>yellow</option><option>blue</option><option>red</option></select>
+      </details>
+    </section>
+
+    <div id="flow-status" class="status hidden"></div>
+    <canvas id="flow-view" class="hidden"></canvas>
+
+    <section id="flow-s-holds" class="sticky hidden">
+      <div id="flow-holds-msg"></div>
+      <div class="row">
+        <button id="flow-holds-undo">Undo</button>
+        <button id="flow-retake">New photo</button>
+        <button id="flow-holds-ok" class="primary" disabled>Looks good</button>
+      </div>
+    </section>
+
+    <section id="flow-s-route" class="sticky hidden">
+      <div id="flow-route-msg">Pick what you want to train.</div>
+      <div class="types skills" id="flow-skills">
+        <button data-skill="reach" class="on">Reach</button>
+        <button data-skill="traverse">Traverse</button>
+        <button data-skill="easy">Easy</button>
+        <button data-skill="hard">Hard</button>
+      </div>
+      <div class="row">
+        <button id="flow-make" class="primary">Make route</button>
+        <button id="flow-another" class="hidden">Another one</button>
+        <button id="flow-keep" class="primary hidden">Use this route</button>
+      </div>
+      <div class="row"><button id="flow-route-back">Back</button></div>
+    </section>
+
+    <section id="flow-s-climb" class="hidden">
+      <h1 id="flow-climb-title">Route ready</h1>
+      <p id="flow-climb-text"></p>
+      <p>Put the phone down 2-4 m back, the whole wall in view, never on the landing zone. Sticker on your
+        fingertip. Tap <b>Start</b>, then tap the sticker once on the screen so the phone learns its colour.</p>
+      <p class="muted">A high beep for the next hold, a low buzz for a hold not on the route, a tune at the top.
+        Nothing counts while the wall is not matched. No video is saved.</p>
+      <p><button id="flow-start" class="primary wide">Start</button></p>
+      <div class="row"><button id="flow-climb-back">Another route</button><button id="flow-restart">Start over</button></div>
+    </section>
+    <div id="flow-error" class="error"></div>
+  </div>
+
+  <div id="flow-cam" class="cam hidden">
+    <video id="flow-video" playsinline muted autoplay></video>
+    <canvas id="flow-canvas"></canvas>
+    <div class="hud">
+      <div id="flow-state" class="state warn">Starting...</div>
+      <div id="flow-detail" class="detail"></div>
+      <div id="flow-flash" class="flash"></div>
+    </div>
+    <div id="flow-summary" class="summary hidden"></div>
+    <div class="bar" id="flow-bar-photo">
+      <button id="flow-cancel">Cancel</button>
+      <button id="flow-shutter" class="primary">Capture</button>
+    </div>
+    <div class="bar hidden" id="flow-bar-climb">
+      <button id="flow-sound">Sound on</button>
+      <button id="flow-again">Try again</button>
+      <button id="flow-done" class="primary">Done</button>
+      <button id="flow-stop">Stop</button>
+    </div>
+  </div>
+</section>
 
 <!-- ============================================================ See a route (live overlay) -->
 <section id="view-live" class="view">
@@ -156,16 +244,18 @@ Only film people who agreed to it.</p>
 <div id="bug" class="bugbox hidden"></div>
 
 <script src="web/common.js"></script>
+<script src="web/flow.js"></script>
 <script src="web/live.js"></script>
 <script src="web/scan.js"></script>
 <script src="web/track.js"></script>
 <script>
 "use strict";
-// Tabs: #live, #scan, #track. The old addresses /live, /scan and /track open the same page on that tab.
-const TABS = ["live", "scan", "track"];
+// Tabs: #climb (the whole flow), #live, #scan, #track. The addresses /live, /scan and /track open the same
+// page on that tab; the plain link opens Climb.
+const TABS = ["climb", "live", "scan", "track"];
 let current = null;
 function openTab(name, params) {
-  if (!TABS.includes(name)) name = "live";
+  if (!TABS.includes(name)) name = "climb";
   if (current && current !== name && Ascent.views[current].leave) Ascent.views[current].leave();
   current = name;
   TABS.forEach(t => {
@@ -179,7 +269,7 @@ Ascent.openTab = (name, params) => {
   openTab(name, params);
 };
 window.addEventListener("hashchange", () => openTab(location.hash.slice(1)));
-openTab(location.hash.slice(1) || location.pathname.replace(/^\//, "") || "live");
+openTab(location.hash.slice(1) || location.pathname.replace(/^\//, "") || "climb");
 </script>
 </body>
 </html>
