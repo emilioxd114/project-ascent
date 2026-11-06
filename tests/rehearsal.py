@@ -414,6 +414,139 @@ def rehearse_challenges():
     check("challenge: deleting a person deletes their challenges", ascent.all_challenges() == [])
 
 
+class Phone:
+    """A headless phone: talks to the local server over HTTPS, checking the self-signed certificate."""
+
+    def __init__(self, port, code, cafile):
+        import http.client
+        import ssl
+        self.port, self.code, self.http = port, code, http.client
+        self.ctx = ssl.create_default_context(cafile=cafile) if cafile else None
+
+    def request(self, method, path, body=None, ctype="application/json", code=True):
+        if code:
+            path += ("&" if "?" in path else "?") + "code=" + self.code
+        if self.ctx:
+            c = self.http.HTTPSConnection("localhost", self.port, context=self.ctx, timeout=30)
+        else:
+            c = self.http.HTTPConnection("localhost", self.port, timeout=30)
+        if isinstance(body, (dict, list)):
+            body = json.dumps(body).encode()
+        c.request(method, path, body=body, headers={"Content-Type": ctype} if body is not None else {})
+        r = c.getresponse()
+        data = r.read()
+        c.close()
+        try:
+            data = json.loads(data)
+        except ValueError:
+            pass
+        return r.status, data, r
+
+    def post(self, path, body=None, **kw):
+        return self.request("POST", path, body if body is not None else {}, **kw)
+
+    def frame(self, sid, img, extra=""):
+        ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        return self.post(f"/api/frame?sid={sid}{extra}", jpg.tobytes(), ctype="image/jpeg")
+
+
+def start_server():
+    import threading
+    try:
+        import cryptography  # noqa: F401
+        cert, key = ascent.ensure_certificate(["127.0.0.1"])
+    except (ImportError, SystemExit):
+        print("[SKIP] HTTPS (cryptography not installed) - testing the same server over plain HTTP")
+        cert = key = None
+    httpd = ascent.make_server("127.0.0.1", 0, "k3y5ab", cert, key)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, Phone(httpd.server_address[1], "k3y5ab", cert), cert
+
+
+def phone_view(photo, H, side=800):
+    """What the phone sends: the camera view, downscaled so the long side is 800 px. Returns frame, H_frame."""
+    view = cv2.warpPerspective(photo, H, (1280, 720), borderValue=(30, 30, 30))
+    f = side / 1280
+    return cv2.resize(view, (side, int(720 * f)), interpolation=cv2.INTER_AREA), np.diag([f, f, 1.0]) @ H
+
+
+def rehearse_serve_live(photo):
+    """serve + /live: access code, pages, wall list, frames from a moving phone, route buttons."""
+    httpd, phone, cert = start_server()
+    try:
+        st, body, _ = phone.request("GET", "/live", code=False)
+        check("serve: no code, no page", st == 403)
+        st, body, r = phone.request("GET", "/live")
+        check("serve: the code opens /live and sets a cookie", st == 200 and b"/api/frame" in body
+              and "ascent_code=k3y5ab" in (r.getheader("Set-Cookie") or ""))
+        st, _, _ = phone.request("GET", "/api/walls", code=False)
+        check("serve: no code, no data", st == 403)
+        st, js, _ = phone.request("GET", "/web/common.js", code=False)
+        st2, _, _ = phone.request("GET", "/web/../ascent.py", code=False)
+        st3, _, _ = phone.request("GET", "/web/..%2Fascent.py")
+        check("serve: scripts load; nothing outside web/", st == 200 and st2 in (403, 404) and st3 == 404,
+              f"{st} {st2} {st3}")
+        if cert:
+            check("serve: HTTPS with the self-signed certificate (checked against it)", True)
+        st, walls, _ = phone.request("GET", "/api/walls")
+        tw = [w for w in walls["walls"] if w["name"] == "tw"]
+        check("serve: wall list with routes", st == 200 and tw and any(r["name"] == "t1" for r in tw[0]["routes"]))
+
+        st, info, _ = phone.post("/api/live/start", {"wall": "tw", "route": "t1", "train": "jug", "moves": 5})
+        check("serve: start a live session", st == 200 and info.get("route") == "t1" and info.get("sid"), str(info))
+        sid = info["sid"]
+        wall = json.load(open("walls/tw/wall.json"))
+        px = {h["id"]: h["px"] for h in wall["holds"]}
+        route_px = [px[i] for i in ascent.load_route("tw", "t1")["holds"]]
+        errs, states = [], []
+        for H in camera_path(36)[:12]:
+            img, Hf = phone_view(photo, H)
+            st, a, _ = phone.frame(sid, img)
+            states.append(a.get("state"))
+            if a.get("state") == "locked":
+                got = np.array([[r["x"], r["y"]] for r in a["rings"]])
+                c = ascent.transform(Hf, wall["corners_px"][:2])
+                cm_per_px = wall["size_cm"]["w"] / np.linalg.norm(c[1] - c[0])
+                errs.append(np.linalg.norm(got - ascent.transform(Hf, route_px), axis=1).max() * cm_per_px)
+        check("serve: phone frames lock", states.count("locked") >= 11, str(states))
+        check("serve: rings land on the holds (first frame, no smoothing)", errs and errs[0] < 0.5,
+              f"{errs[0]:.2f} cm" if errs else "no lock")
+        check("serve: ... and within 3 cm on a moving phone, smoothing included", errs and max(errs) < 3,
+              f"worst {max(errs):.1f} cm" if errs else "no lock")
+        check("serve: numbered start / middle / finish", a["rings"][0]["kind"] == "start" and
+              a["rings"][-1]["kind"] == "finish" and [r["n"] for r in a["rings"]] == list(range(1, 6)))
+        st, a, _ = phone.frame(sid, np.full((450, 800, 3), 30, np.uint8))
+        check("serve: no wall in view - no rings, a message instead", st == 200 and a["state"] != "locked"
+              and "rings" not in a and a.get("message"), str(a))
+        far, _ = phone_view(photo, np.diag([0.08, 0.08, 1.0]))
+        st, a, _ = phone.frame(sid, far)
+        check("serve: far away - no rings", "rings" not in a, str(a.get("state")))
+
+        before = set(ascent.route_names("tw"))
+        st, info, _ = phone.post(f"/api/route/new?sid={sid}")
+        made = set(ascent.route_names("tw")) - before
+        check("serve: New route button generates and switches", st == 200 and made == {info["route"]}, str(info))
+        st, info2, _ = phone.post(f"/api/route/next?sid={sid}")
+        check("serve: Next route button", st == 200 and info2["route"] != info["route"])
+
+        st, e1, _ = phone.post("/api/live/start", {"wall": "../walls"})
+        st2, e2, _ = phone.post("/api/live/start", {"wall": "nowall"})
+        st3, e3, _ = phone.frame("nosuchsession", far)
+        st4, e4, _ = phone.post(f"/api/frame?sid={sid}", b"not a jpeg", ctype="image/jpeg")
+        check("serve: bad requests get a message, the server stays up", (st, st2, st3, st4) == (400,) * 4
+              and "No wall called" in e2["error"] and "reload" in e3["error"], f"{st} {st2} {st3} {st4}")
+        if cert:
+            m = os.path.getmtime(cert)
+            ascent.ensure_certificate(["127.0.0.1"])
+            same = os.path.getmtime(cert) == m
+            ascent.ensure_certificate(["127.0.0.1", "192.168.1.50"])
+            check("serve: certificate kept, and remade for a new laptop IP",
+                  same and "192.168.1.50" in json.load(open("tls/ips.json")))
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -509,7 +642,7 @@ def main():
         for H_true, H_est in zip(Hs[:10], located[:10]):
             if H_est is not None:
                 errs.append(np.linalg.norm(ascent.transform(H_est, pts) - ascent.transform(H_true, pts), axis=1).max())
-        check("rings land on the holds", errs and max(errs) < 6, f"worst {max(errs):.1f} px" if errs else "no lock")
+        check("rings land on the holds", errs and max(errs) < 6, f"worst {max(errs):.1f} px, all {np.round(errs, 1).tolist()}" if errs else "no lock")
         check("g key generated a new route", "r5" in ascent.route_names("panel"), str(ascent.route_names("panel")))
         check("screenshot saved", os.path.exists("ascent_shot_1.png"))
 
@@ -593,6 +726,7 @@ def main():
         rehearse_profile()
         rehearse_routes()
         rehearse_challenges()
+        rehearse_serve_live(photo)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

@@ -87,6 +87,29 @@ This plays a whole session with scripted clicks, keys and a fake camera video: s
 
 To replay a recording instead of the webcam: `python ascent.py live --wall panel --video clip.mp4`.
 
+## Phone as camera (`serve`)
+
+The laptop does the work; the phone is the camera and the screen. Install once (it only makes the certificate): `pip install cryptography`.
+
+```
+python ascent.py serve
+```
+
+It prints links like `https://192.168.1.23:8443/live?code=k7mz2p`. Type the whole link into the phone's browser (Safari on iPhone, Chrome on Android) - the code is part of it, and without it the page says "Ask for the link with the code". A new code is made every time you start `serve`; `--code` sets your own.
+
+- **/live** - pick wall and route, tap **Start camera**, point at the wall. Rings appear only while the wall is matched. **New route** = the `g` key, **Next route** = `n`. Hold the phone sideways to fit a whole wall.
+
+### Connecting phone and laptop
+
+1. **Same Wi-Fi.** Phone and laptop must be on the same network.
+2. **If the page doesn't load on the venue Wi-Fi**, the network probably stops devices from seeing each other (common on event and guest Wi-Fi). Use the phone's hotspot instead: iPhone: Settings > Personal Hotspot > Allow Others to Join; Android: Settings > Network > Hotspot. Join it with the laptop, then **restart `serve`** - it prints the new address (and makes a new certificate, so accept the warning again). The phone opens the link while being the hotspot itself; that works.
+3. **The certificate warning (once per certificate).** The certificate is made by your laptop, not by a public authority, so the phone warns. It is safe to continue for this address:
+   - **iPhone (Safari):** "This Connection Is Not Private" > **Show Details** > **visit this website** > **Visit Website** (confirm if asked). Then allow the camera when asked. Use Safari; if the camera stays black, Settings > Safari > Camera > Ask or Allow.
+   - **Android (Chrome):** "Your connection is not private" > **Advanced** > **Proceed to 192.168.x.x (unsafe)**. Then **Allow** the camera.
+4. **Windows firewall.** The first time `serve` runs, Windows asks whether Python may communicate on networks: tick **Private networks** and click **Allow access**. The network itself must be marked Private: Settings > Network & internet > Wi-Fi > your network > Network profile type > **Private** (do the same for the phone's hotspot). If you clicked Cancel earlier: Control Panel > Windows Defender Firewall > **Allow an app or feature through Windows Defender Firewall** > Change settings > tick **Private** next to Python (python.exe; add it with "Allow another app" if missing) > OK. On a Mac, click **Allow** when asked about incoming connections.
+
+**Still nothing?** Check the address matches what `serve` printed now (IPs change between networks), that nothing else uses port 8443 (`--port 9443`), and try the hotspot. Frames are processed in memory on the laptop and never saved.
+
 ## Record my try (motion tracking with sounds)
 
 Needs MediaPipe once: `pip install mediapipe`. Everything else works without it.

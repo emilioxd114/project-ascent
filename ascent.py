@@ -14,6 +14,7 @@ Commands
   python ascent.py live --wall panel --route r1     route drawn on the live camera
   python ascent.py preview --wall panel --route r1  route drawn on the saved photo (demo backup)
   python ascent.py list                             show saved walls and routes
+  python ascent.py serve                            phone as camera: open the printed link on the phone
   python ascent.py track --wall panel --route r1    record my try: hand tracking with sounds (needs mediapipe)
   python ascent.py log --climber lena --wall panel --route r1 --result sent    log a climb (sent/tried/fail)
   python ascent.py log --climber lena               show Lena's logbook
@@ -1921,6 +1922,344 @@ def cmd_track(args):
     run_track(args)
 
 
+# ---------------------------------------------------------------- phone as camera: local HTTPS server
+
+WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+TLS_DIR = "tls"
+SAFE_NAME = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+MAX_BODY = 25 * 1024 * 1024
+SESSION_IDLE_S = 900
+
+
+def safe_name(name):
+    """Wall and route names that come from the phone: letters, digits, - and _ only (no paths)."""
+    if not isinstance(name, str) or not 0 < len(name) <= 40 or any(c not in SAFE_NAME for c in name):
+        raise ValueError("Use letters, digits, - and _ only, at most 40 characters.")
+    return name
+
+
+def lan_ips():
+    """The laptop's IPv4 addresses that a phone on the same network could reach."""
+    import socket
+    ips = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))           # no packet is sent; this only picks the outgoing interface
+        ips.append(s.getsockname()[0])
+        s.close()
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.append(info[4][0])
+    except OSError:
+        pass
+    out = []
+    for ip in ips:
+        if not ip.startswith("127.") and ip not in out:
+            out.append(ip)
+    return out
+
+
+def ensure_certificate(ips, folder=TLS_DIR):
+    """A self-signed certificate for this laptop, made once. Remade when the laptop's IP is new to it
+    (for example after switching to the phone's hotspot), because phones check the IP against it."""
+    cert, key, meta = (os.path.join(folder, n) for n in ("cert.pem", "key.pem", "ips.json"))
+    if os.path.exists(cert) and os.path.exists(key) and os.path.exists(meta):
+        with open(meta, encoding="utf-8") as f:
+            if set(ips) <= set(json.load(f)):
+                return cert, key
+    try:
+        import datetime
+        import ipaddress
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+    except ImportError:
+        sys.exit("serve needs the 'cryptography' package once, to make its certificate: pip install cryptography")
+    k = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Project Ascent (this laptop)")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    alt = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+    alt += [x509.IPAddress(ipaddress.ip_address(ip)) for ip in ips]
+    c = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(k.public_key())
+         .serial_number(x509.random_serial_number())
+         .not_valid_before(now - datetime.timedelta(days=1)).not_valid_after(now + datetime.timedelta(days=365))
+         .add_extension(x509.SubjectAlternativeName(alt), critical=False)
+         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+         .sign(k, hashes.SHA256()))
+    os.makedirs(folder, exist_ok=True)
+    with open(key, "wb") as f:
+        f.write(k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
+                                serialization.NoEncryption()))
+    with open(cert, "wb") as f:
+        f.write(c.public_bytes(serialization.Encoding.PEM))
+    save_json(meta, sorted(set(ips)))
+    print(f"Made a new certificate in {folder}/ - the phone will show a warning once; see START_HERE.md.")
+    return cert, key
+
+
+class PhoneSession:
+    """One phone looking at one wall: the same Tracker and rules as 'live', frames from the phone."""
+
+    def __init__(self, wall_name, route_name=None, train="", moves=6, height=172.0, level="medium"):
+        import threading
+        self.lock = threading.Lock()
+        self.wall, self.ref = load_wall(wall_name)
+        self.train, self.moves, self.height, self.level = parse_train(train), moves, height, level
+        self.px = {h["id"]: h["px"] for h in self.wall["holds"]}
+        self.tracker = Tracker(self.wall, self.ref)
+        self.ring_ref = 0.022 * self.ref.shape[1]
+        self.smooth, self.last_lock, self.started, self.used = None, 0.0, time.time(), time.time()
+        names = route_names(wall_name)
+        if route_name:
+            route = load_route(wall_name, safe_name(route_name))
+        elif names:
+            route = load_route(wall_name, names[-1])
+        else:
+            route = make_generated_route(self.wall, moves, height, self.train, level)
+            if route is None:
+                sys.exit("This wall has no routes and none could be generated.")
+        self.use(route)
+
+    def use(self, route):
+        self.route = route
+        self.ref_pts = np.array([self.px[i] for i in route["holds"]], dtype=np.float32)
+        self.smooth = None
+
+    def info(self):
+        r = self.route
+        return {"wall": self.wall["name"], "version": self.wall["version"], "route": r["name"],
+                "grade": r.get("estimated_grade"), "holds": len(r["holds"]), "train": r.get("train") or [],
+                "made_by": r.get("made_by"), "warnings": r.get("warnings") or [],
+                "old_version": r.get("wall_version") != self.wall["version"]}
+
+    def frame(self, img):
+        """Returns what the phone should draw. Rings only when locked - otherwise the state and a message."""
+        H, state = self.tracker.locate(img)
+        now = time.time()
+        self.used = now
+        out = {"w": img.shape[1], "h": img.shape[0]}
+        if H is None:
+            self.smooth = None
+            since = now - max(self.last_lock, self.started)
+            msg = {"far": "Move closer", "close": "Step back - show more of the wall"}.get(
+                state, f"Point the camera at '{self.wall['name']}'")
+            if since > 9:
+                msg = "Can't match this wall. Has it been reset?"
+            out.update(state=state, message=msg)
+            return out, None
+        pts = transform(H, self.ref_pts)
+        if self.smooth is not None and len(self.smooth) == len(pts) and \
+                np.mean(np.linalg.norm(pts - self.smooth, axis=1)) < 40:
+            pts = 0.5 * self.smooth + 0.5 * pts
+        self.smooth, self.last_lock = pts, now
+        edge = transform(H, [[0, 0], [self.ring_ref, 0]])
+        n = len(pts)
+        out.update(state="locked", radius=round(float(np.linalg.norm(edge[1] - edge[0])), 1),
+                   rings=[{"x": round(float(x), 1), "y": round(float(y), 1), "n": i + 1,
+                           "kind": "start" if i == 0 else "finish" if i == n - 1 else "middle"}
+                          for i, (x, y) in enumerate(pts)])
+        return out, H
+
+    def new_route(self):
+        r = make_generated_route(self.wall, self.moves, self.height, self.train, self.level)
+        if r is None:
+            raise ValueError("No route fits these settings.")
+        self.use(r)
+
+    def next_route(self):
+        names = route_names(self.wall["name"])
+        if names:
+            i = names.index(self.route["name"]) if self.route["name"] in names else -1
+            self.use(load_route(self.wall["name"], names[(i + 1) % len(names)]))
+
+
+def walls_overview():
+    out = []
+    if not os.path.isdir(DATA_DIR):
+        return out
+    for name in sorted(os.listdir(DATA_DIR)):
+        p = wall_path(name, "wall.json")
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            w = json.load(f)
+        routes = []
+        for rn in route_names(name):
+            r = load_route(name, rn)
+            routes.append({"name": rn, "grade": r.get("estimated_grade"), "holds": len(r["holds"]),
+                           "train": r.get("train") or [], "made_by": r.get("made_by"),
+                           "old_version": r.get("wall_version") != w["version"]})
+        out.append({"name": name, "version": w["version"], "holds": len(w["holds"]), "mode": w.get("mode"),
+                    "routes": routes})
+    return out
+
+
+def make_handler(code, sessions):
+    """The request handler. Every page and API call needs the access code (in the URL once, then a cookie)."""
+    import hmac
+    import secrets
+    import threading
+    from http.server import BaseHTTPRequestHandler
+    from urllib.parse import parse_qs, urlparse
+    lock = threading.Lock()
+    pages = {"/": "index.html", "/live": "live.html", "/scan": "scan.html", "/track": "track.html"}
+    types = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+             ".css": "text/css; charset=utf-8"}
+
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "Ascent"
+        sys_version = ""
+
+        def log_message(self, fmt, *a):
+            pass                                    # 8 frames a second would flood the console
+
+        def allowed(self, q):
+            given = (q.get("code") or [""])[0]
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                k, _, v = part.strip().partition("=")
+                if k == "ascent_code":
+                    given = given or v
+            return hmac.compare_digest(given.encode(), code.encode())
+
+        def send(self, status, body, ctype="application/json", cookie=False):
+            data = body if isinstance(body, bytes) else json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if cookie:
+                self.send_header("Set-Cookie", f"ascent_code={code}; Path=/; Secure; HttpOnly; SameSite=Strict")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def body(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > MAX_BODY:
+                raise ValueError("Upload too big.")
+            return self.rfile.read(n)
+
+        def do_GET(self):
+            u = urlparse(self.path)
+            q = parse_qs(u.query)
+            if u.path.startswith("/web/") and os.path.splitext(u.path)[1] in (".js", ".css"):
+                fname = u.path[len("/web/"):]           # scripts and styles hold no data: no code needed
+                if fname not in os.listdir(WEB_DIR):
+                    return self.send(404, {"error": "not found"})
+                with open(os.path.join(WEB_DIR, fname), "rb") as f:
+                    return self.send(200, f.read(), types[os.path.splitext(fname)[1]])
+            if not self.allowed(q):
+                return self.send(403, b"<h1>Ask for the link with the code.</h1><p>It is printed on the laptop "
+                                      b"when you run: python ascent.py serve</p>", "text/html; charset=utf-8")
+            if u.path in pages:
+                fname = pages[u.path]
+                if fname not in os.listdir(WEB_DIR):
+                    return self.send(404, {"error": "not found"})
+                with open(os.path.join(WEB_DIR, fname), "rb") as f:
+                    return self.send(200, f.read(), types[os.path.splitext(fname)[1]], cookie=True)
+            if u.path == "/api/walls":
+                return self.send(200, {"walls": walls_overview()})
+            return self.send(404, {"error": "not found"})
+
+        def do_POST(self):
+            u = urlparse(self.path)
+            q = parse_qs(u.query)
+            if not self.allowed(q):
+                return self.send(403, {"error": "Ask for the link with the code."})
+            try:
+                status, out = 200, self.api(u.path, q)
+            except (ValueError, KeyError, TypeError) as e:
+                status, out = 400, {"error": str(e) or "bad request"}
+            except SystemExit as e:                  # the CLI's helpers exit with a message; keep the server up
+                status, out = 400, {"error": str(e.code)}
+            return self.send(status, out)
+
+        def session(self, q):
+            sid = (q.get("sid") or [""])[0]
+            with lock:
+                s = sessions.get(sid)
+            if s is None:
+                raise ValueError("Session ended - reload the page.")
+            return s
+
+        def api(self, path, q):
+            if path == "/api/live/start":
+                req = json.loads(self.body() or b"{}")
+                s = PhoneSession(safe_name(req["wall"]), req.get("route") or None, req.get("train") or "",
+                                 int(req.get("moves") or 6), float(req.get("height") or 172),
+                                 req.get("level") if req.get("level") in LEVEL_TARGET else "medium")
+                sid = secrets.token_urlsafe(12)
+                with lock:
+                    now = time.time()
+                    for k in [k for k, v in sessions.items() if now - v.used > SESSION_IDLE_S]:
+                        del sessions[k]
+                    if len(sessions) >= 8:
+                        del sessions[min(sessions, key=lambda k: sessions[k].used)]
+                    sessions[sid] = s
+                return {"sid": sid, **s.info()}
+            if path == "/api/frame":
+                s = self.session(q)
+                img = cv2.imdecode(np.frombuffer(self.body(), np.uint8), cv2.IMREAD_COLOR)
+                if img is None:
+                    raise ValueError("Not a JPEG image.")
+                with s.lock:
+                    out, H = s.frame(img)
+                    out["route"] = s.route["name"]
+                    extra = getattr(s, "after_frame", None)
+                    if extra:
+                        extra(out, img, H, q)
+                return out
+            if path in ("/api/route/new", "/api/route/next"):
+                s = self.session(q)
+                with s.lock:
+                    s.new_route() if path.endswith("new") else s.next_route()
+                    return s.info()
+            raise ValueError("Unknown API call.")
+
+    return Handler
+
+
+def make_server(host, port, code, certfile=None, keyfile=None):
+    """An HTTPS server (plain HTTP only when no certificate is given - used by the rehearsal)."""
+    from http.server import ThreadingHTTPServer
+    import ssl
+    sessions = {}
+    httpd = ThreadingHTTPServer((host, port), make_handler(code, sessions))
+    httpd.daemon_threads = True
+    httpd.sessions = sessions
+    if certfile:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile, keyfile)
+        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+    return httpd
+
+
+def cmd_serve(args):
+    import secrets
+    ips = lan_ips()
+    cert, key = ensure_certificate(ips)
+    code = args.code or "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(6))
+    httpd = make_server(args.host, args.port, code, cert, key)
+    print("Project Ascent - phone as camera. Phone and laptop on the same Wi-Fi (or the phone's hotspot).")
+    if not ips:
+        print("No network found. Join a Wi-Fi or the phone's hotspot, then start serve again.")
+    for ip in ips:
+        base = f"https://{ip}:{args.port}"
+        print(f"  See a route:    {base}/live?code={code}")
+        print(f"  Scan a wall:    {base}/scan?code={code}")
+        print(f"  Record my try:  {base}/track?code={code}")
+    print("The phone warns about the certificate the first time - see START_HERE.md. Ctrl+C = stop.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        httpd.server_close()
+
+
 def cmd_list(args):
     if not os.path.isdir(DATA_DIR):
         print("No walls yet. Run: python ascent.py scan --wall panel")
@@ -2056,6 +2395,11 @@ def main():
     p.add_argument("--note")
     p.add_argument("--undo", action="store_true", help="remove the last entry")
 
+    p = sub.add_parser("serve", help="phone as camera: local HTTPS server, open the printed link on the phone")
+    p.add_argument("--port", type=int, default=8443)
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--code", help="access code for the phone link; default: a new random one")
+
     p = sub.add_parser("preview")
     p.add_argument("--wall", required=True)
     p.add_argument("--route", required=True)
@@ -2065,7 +2409,7 @@ def main():
                "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track,
                "log": cmd_log, "progress": cmd_progress, "recommend": cmd_recommend,
                "profile": cmd_profile, "safety": cmd_safety, "routes": cmd_routes,
-               "challenge": cmd_challenge}[args.cmd]
+               "challenge": cmd_challenge, "serve": cmd_serve}[args.cmd]
     sys.exit(handler(args) or 0)
 
 

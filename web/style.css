@@ -1,0 +1,41 @@
+/* Project Ascent phone pages: dark, camera-first. The route colours are the only colour. */
+:root { --green: rgb(74,222,128); --blue: rgb(106,169,244); --red: rgb(243,115,111); --amber: rgb(245,177,61);
+        --bg: #0c0e10; --panel: rgba(12,14,16,0.82); --text: #f4f3f0; --grey: #9a9fa6; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+             font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--blue); }
+.page { padding: 16px; max-width: 640px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 8px 0 4px; }
+.muted { color: var(--grey); font-size: 14px; }
+button, select, input { font: inherit; color: var(--text); background: #1d2126; border: 1px solid #3a4048;
+                        border-radius: 10px; padding: 10px 12px; }
+button { background: #2a3038; min-height: 44px; }
+button.primary { background: var(--blue); color: #0c0e10; border: none; font-weight: 600; }
+button:disabled { opacity: 0.5; }
+label { display: block; margin: 10px 0 4px; font-size: 14px; color: var(--grey); }
+select, input { width: 100%; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row > * { flex: 1; }
+.big-links a { display: block; padding: 16px; margin: 10px 0; background: #1d2126; border-radius: 12px;
+               color: var(--text); text-decoration: none; }
+.big-links a b { display: block; font-size: 18px; }
+.error { color: var(--amber); margin: 8px 0; }
+
+/* full-screen camera with the canvas on top */
+.cam { position: fixed; inset: 0; background: #000; }
+.cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cam video { object-fit: cover; }
+.cam canvas { pointer-events: none; }
+.hud { position: absolute; left: 0; right: 0; top: 0; padding: 12px 14px calc(12px + env(safe-area-inset-top));
+       padding-top: calc(12px + env(safe-area-inset-top)); background: linear-gradient(var(--panel), transparent); }
+.hud .state { font-weight: 700; font-size: 19px; text-shadow: 0 1px 3px #000; }
+.hud .detail { font-size: 14px; text-shadow: 0 1px 3px #000; }
+.state.locked { color: var(--green); }
+.state.warn { color: var(--amber); }
+.flash { font-size: 20px; font-weight: 700; margin-top: 6px; text-shadow: 0 1px 3px #000; }
+.bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px;
+       padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--panel)); }
+.bar button { flex: 1; }
+.setup { position: absolute; inset: 0; overflow: auto; background: var(--bg); z-index: 5; }
+.hidden { display: none !important; }

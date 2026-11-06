@@ -15,7 +15,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Profile** (`profile`, 6 Nov): goal, language, level, height, age group, visibility with stricter rules for minors and health data, therapist-set rehab settings, delete one person from everything. Local files only; accounts still need a server.
 - **Safety card and route filters** (`safety`, `routes`, 6 Nov): a 7-line card in English or German, shown once per climber and wall; the boulder list filtered by skill, grade, holds, made by, setter, not yet sent, within reach, with "N climbed".
 - **Challenges** (`challenge`, 6 Nov): invite someone on the same laptop to a route; done when they send it or give it a real try; both get a milestone and points; no deadline; minors can't be sent routes past their reach. Sending between phones needs the server.
-- **Tests:** selftest and the rehearsal (77 checks, 78 with MediaPipe), all passing.
+- **Phone as camera, live** (`serve` + `/live`, 6 Nov): local HTTPS server, the phone streams frames, the laptop tracks and answers with ring positions. Tested headlessly with synthetic frames and in headless Chromium with a fake camera; **not yet on a real phone.**
+- **Tests:** selftest and the rehearsal (94 checks, 95 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested

@@ -1,3 +1,4 @@
 opencv-contrib-python
 numpy
+# optional, only for "serve" (makes its HTTPS certificate once):  pip install cryptography
 # optional, only for "track" (motion tracking):  pip install mediapipe

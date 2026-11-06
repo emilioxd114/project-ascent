@@ -13,3 +13,6 @@ models/
 logbook/
 profiles/
 challenges/
+
+# The local HTTPS certificate and its private key for "serve" - made on each laptop, never shared
+tls/

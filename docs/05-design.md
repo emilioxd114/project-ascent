@@ -16,6 +16,10 @@ The phone screens live on a Design canvas in Claude: **Project Ascent — scan a
 - Under step 1, **first time at a wall:** A frame the wall (live checks: whole wall in frame, holding steady, enough light) → B tap fixed points → C name, scale, save (with the reset explanation). Then back to step 2.
 - Under step 3, **when the camera can't lock:** "Move closer" (or "Step back"); after repeated failures, "Has this wall been reset?" with "Scan a new version" / "Try again".
 
+## The phone pages (prototype)
+
+`python ascent.py serve` serves plain HTML pages to a phone (dark, camera-first like the canvas): `/live` - choose wall and route, the camera fills the screen, "Locked" in green or the move-closer / step-back message in amber at the top, **New route** / **Next route** / **Stop** at the bottom. Hold the phone sideways to see a whole wall.
+
 ## Design decisions
 
 - **Dark, camera-first interface.** The route colours are the only colour in the design, so they stand out on the camera feed.

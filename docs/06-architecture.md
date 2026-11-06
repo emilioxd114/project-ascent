@@ -6,6 +6,7 @@ Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a
 
 | Command | What it does |
 | --- | --- |
+| `serve` | Phone as camera: HTTPS server on 0.0.0.0:8443 (`--port`, `--host`, `--code`), prints the phone links with the laptop's IP and an access code. Pages `/live` (and `/scan`, `/track`, see below). |
 | `selftest` | Builds a synthetic wall, views it from another angle, checks the overlay error. No camera needed. |
 | `scan` | Photo (webcam or `--image`) → click 4 corners → type real size in cm (or pass `--width` / `--height` in cm to skip the questions) → click and tag every hold → save. `--markers` finds the corners from printed markers instead. |
 | `generate` | Rules-based route; `--train`, `--moves`, `--height`, `--level`, `--seed`, `--preview`, `--by NAME` (who set it, optional). |
@@ -131,6 +132,17 @@ Routes may also have `"by": "max"` (who set them, from `--by`); older routes wit
 
 **Speed.** About 60–80 ms per frame for SIFT on a laptop-class CPU; ORB (`--features orb`) is about twice as fast and less robust.
 
+## Phone as camera (`serve`)
+
+- **Standard library only:** `http.server.ThreadingHTTPServer` + `ssl` + `threading`. Pages are plain HTML/JS in `web/` (`common.js` is shared). No framework, no build step.
+- **Certificate:** self-signed, made on first run with the optional `cryptography` package, in `tls/` (out of git - it holds a private key). It names `localhost`, `127.0.0.1` and the laptop's LAN IPs, and is remade when the laptop gets an IP it doesn't name (e.g. on the phone's hotspot); the phone then warns once more.
+- **Access code:** 6 random characters per run (or `--code`), in the link printed on the laptop. Pages and API calls need it, either in the URL or in the cookie the first page sets (`Secure; HttpOnly; SameSite=Strict`). Only `web/*.js` and `web/*.css` load without it; they hold no data. Other people on the Wi-Fi get "Ask for the link with the code".
+- **Live loop:** the phone's back camera fills the screen (`object-fit: cover`); at most 8 times a second, with one request in flight, it sends a JPEG of the current frame (long side 800 px, quality 0.7) to `POST /api/frame?sid=...`. The laptop runs the same `Tracker` and smoothing as `live` and answers either `{"state": "locked", "rings": [{"x", "y", "n", "kind"}], "radius", "w", "h"}` in frame pixels, or `{"state": "far" | "close" | "lost", "message"}` (after 9 s without lock: "Has it been reset?"). The phone maps frame pixels to the screen and draws the haloed, numbered rings on a canvas over the video.
+- **Never guess on the phone either:** rings are drawn only for a `locked` answer, and the canvas is cleared when no answer arrived for 0.6 s.
+- **Latency:** the rings belong to the frame sent ~100-200 ms earlier, so they trail a moving phone slightly; held still, they settle on the holds.
+- **API:** `GET /api/walls` (walls and routes); `POST /api/live/start` `{wall, route?, train?, level?, moves?, height?}` → session id and route info; `POST /api/frame?sid=`; `POST /api/route/new?sid=` (like **g**) and `/api/route/next?sid=` (like **n**). Sessions expire after 15 idle minutes, at most 8 at once.
+- **Safety of the server:** wall and route names from the phone must be letters, digits, `-`, `_`; only files listed in `web/` are served; uploads are capped at 25 MB; the CLI helpers' error exits become a 400 with the message, so the server stays up.
+
 ## Motion tracking (`track`)
 
 - **Pose:** MediaPipe Pose, imported only inside `track`, so every other command works without it. Supports the old `mediapipe.solutions` API and the newer Tasks API (MediaPipe 1.x), which needs `models/pose_landmarker_lite.task` (5.5 MB, downloaded once on first use, kept out of git; `--pose-model FILE` to use a copy).
@@ -166,7 +178,7 @@ Settings come from the options, else the climber's profile (`profiles/<name>.jso
 ## Tests
 
 - `python ascent.py selftest` — install check, overlay error on a synthetic warped wall.
-- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed), profiles (minors, health data, delete one person), safety card once per wall, route filters, challenges (sent or tried finishes it, minors, decline, delete). 77 checks, plus one that runs the real MediaPipe model when it is installed.
+- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed), profiles (minors, health data, delete one person), safety card once per wall, route filters, challenges (sent or tried finishes it, minors, decline, delete), `serve` + `/live` over real HTTPS with synthetic phone frames (access code, no path escapes, lock, ring accuracy in cm, no rings when lost or far, new/next route, bad requests, certificate reuse). 94 checks, plus one that runs the real MediaPipe model when it is installed.
 
 **Not covered:** a real webcam, real windows on Windows, the real panel under venue light.
 
