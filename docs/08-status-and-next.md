@@ -21,13 +21,15 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Phone track** (`/track`, 6 Nov): record my try from the phone; MediaPipe on the laptop, sounds on the phone with Web Audio, the result into the logbook. Tested headlessly with a scripted hand and in headless Chromium with the real model (no person in the test video); **not yet with a real climber.**
 - **Sticker touch tracking** (`track`, 6 Nov): the demo uses a puppet with a coloured sticker on each hand and the phone as a webcam (Camo/DroidCam, `--camera 1`), the overlay on the laptop/projector. No AI. MediaPipe remains as `--touch pose`. The phone web pages are kept but not used in the demo (on the iPhone the scan lost its photo).
 - **Automatic hold detection** (`scan --auto`, 6 Nov): colour blobs on a plain board, shown for checking (click to remove or add); hand clicking stays as the fallback. Not yet tried on the real prop wall photo.
-- **Tests:** selftest and the rehearsal (131 checks, 132 with MediaPipe), all passing.
+- **The whole flow on the phone** (`serve`, tab **Climb**, 6 Nov, pitch day): one link, nothing typed, nothing measured. Photo in the page -> the laptop finds the wall (the 4 printed markers if they are in the photo, else the board's outline with the new `detect_board`, else 4 taps as the last fallback) and the holds (`scan --auto`'s code) -> "Looks good" (a tap fixes a hold, never required) -> Reach / Traverse / Easy / Hard, "Make route" previewed on the photo, "Another one", "Use this route" -> "Start": live rings while locked, a coloured sticker on the fingertip (the CLI's sticker tracking, no MediaPipe), one tap on the sticker teaches its colour, good / off-route / top sounds on the phone, "Done" gives the camera's guess. Width is optional: the climber's reach is scaled to the wall's width when nothing was measured. The three older tabs stay. Tested in the rehearsal (23 new checks) and end to end in a headless Chromium with a fake camera playing synthetic footage (`tests/e2e/flow_e2e.py`); **not yet on a real iPhone, with the real prop wall or the puppet.**
+- **Tests:** selftest and the rehearsal (154 checks, 155 with MediaPipe), all passing; plus the browser test above (needs Playwright).
 - **Demo script:** DEMO.md.
 
 ## Not yet tested
 
 - A real webcam and real windows on Windows.
 - The ArtRock test panel under the venue's lighting.
+- The Climb tab on a real iPhone: the camera inside the page, the certificate warning, sound after the Start tap, and the board outline on the real prop wall (if the outline is not found, the page asks for 4 taps - that is by design, not a crash).
 - Run `scan` on the panel first thing on day two.
 
 ## Open questions

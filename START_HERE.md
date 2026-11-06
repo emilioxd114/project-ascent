@@ -2,6 +2,21 @@
 
 Presenting? The on-stage script is in [DEMO.md](DEMO.md).
 
+## The phone does it all (pitch day): one link, nothing typed
+
+Everything happens on the phone; the laptop only runs the server in the background.
+
+1. **Once, on the laptop:** `pip install opencv-contrib-python numpy cryptography` (MediaPipe is not needed).
+2. **Before the demo:** tape the 4 printed markers near the corners of the wall (optional - without them the app finds the board's outline, and if it can't, it asks you to tap the 4 corners). Put a **green** sticker on your fingertip (or another bright colour that no hold has; pick it under Options).
+3. **Start the server:** `python ascent.py serve` - and leave that window open. It prints one link like `https://192.168.1.23:8443/?code=k7mz2p`. Phone and laptop on the same Wi-Fi, or the phone's hotspot (see "Connecting phone and laptop" below).
+4. **On the iPhone:** open the link in Safari, accept the certificate warning once (Show Details > visit this website), allow the camera. You are on the **Climb** tab:
+   - **New wall: take a photo** → fit the whole wall → **Capture**. The laptop finds the wall and the holds and draws rings on your photo. **Looks good** saves it. (A ring on something that is not a hold? Tap it to remove it. A hold without a ring? Tap it. Never required.)
+   - **Reach / Traverse / Easy / Hard** → **Make route**: the route is drawn numbered on the photo, green start, red finish. **Another one** for a new one, **Use this route** to keep it.
+   - **Start** → put the phone down 2-4 m back with the whole wall in view. Rings appear on the holds as soon as the wall is matched. **Tap the sticker once on the screen** so the phone learns its colour. Climb: a high beep for the next hold, a low buzz for a hold not on the route, a tune at the top. **Done** shows the camera's guess; **Try again** starts over.
+   - Next time: the wall is already there - **Make a route on it** skips the photo.
+
+If the phone shows an amber box, the same error is printed in the laptop window - paste it to whoever fixes it. The three older tabs (See a route, Scan a wall, Record my try) still work as before.
+
 One Python file, runs on a laptop with its webcam. No app, no server, no internet.
 
 ## 1. Install (5 minutes, do it tonight)
@@ -80,7 +95,7 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations, profiles, safety card, route filters and challenges. 77 checks (78 with MediaPipe installed), all passing.
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations, profiles, safety card, route filters and challenges. Plus the phone pages and the Climb flow over a real local server. 154 checks (155 with MediaPipe installed), all passing. `python tests/e2e/flow_e2e.py` additionally drives the Climb tab in a headless browser with a fake camera (needs Node with Playwright).
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.
@@ -139,7 +154,7 @@ python ascent.py track --wall prop --route r1 --camera 1 --sticker green
 - A sticker that stays on a hold for half a second is a touch: a **high beep** for the next hold in order, a **low buzz** for a hold that is not on the route, a tune at the top. **m** = sound on/off, **q** = stop and see the result.
 - Nothing counts and nothing is drawn while the wall isn't matched.
 
-## Phone as camera through the browser (`serve`, not used in the demo)
+## Phone as camera through the browser (`serve`): the other three tabs
 
 The laptop does the work; the phone is the camera and the screen. Install once (it only makes the certificate): `pip install cryptography`.
 
@@ -147,7 +162,7 @@ The laptop does the work; the phone is the camera and the screen. Install once (
 python ascent.py serve
 ```
 
-It prints **one link** like `https://192.168.1.23:8443/?code=k7mz2p`. Type the whole link into the phone's browser (Safari on iPhone, Chrome on Android) - the code is part of it, and without it the page says "Ask for the link with the code". A new code is made every time you start `serve`; `--code` sets your own. It is one page with three tabs at the top:
+It prints **one link** like `https://192.168.1.23:8443/?code=k7mz2p`. Type the whole link into the phone's browser (Safari on iPhone, Chrome on Android) - the code is part of it, and without it the page says "Ask for the link with the code". A new code is made every time you start `serve`; `--code` sets your own. It is one page with four tabs at the top; **Climb** is described above, the others are:
 
 - **Scan a wall** - name the wall, tap **Take photo**: the camera opens inside the page and shows the whole frame; fit the wall and tap **Take photo** again. (Or **Choose a photo** from the gallery.) Then tap the 4 corners, type width and height in cm (or leave the width empty to skip), tap every hold and its type, **Save wall**. Same result as `python ascent.py scan`, versions included: scanning an existing wall again makes a new version and archives the old one. Small holds: turn the phone sideways and pinch to zoom. **See routes on it** jumps to the first tab with the new wall picked.
 - **Record my try** - from the phone: pick wall and route, optionally your name (then the result goes into your logbook), tap **Start camera and sound**, put the phone 3-4 m back. The phone beeps; **Finish** shows the camera's guess, **Try again** starts over. Needs MediaPipe on the laptop (see "Record my try" below); without it the page says so.
