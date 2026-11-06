@@ -89,7 +89,13 @@ To replay a recording instead of the webcam: `python ascent.py live --wall panel
 
 ## Prop wall demo: phone as webcam, puppet with stickers
 
-The phone is a camera for the laptop through a webcam app (**Camo** or **DroidCam**: install it on the phone and on the laptop, connect them). The overlay shows on the laptop or projector. The laptop's own webcam is usually camera 0, the phone camera 1 - if 1 shows the wrong camera, try `--camera 2`.
+The phone is a camera for the laptop through a webcam app (**Camo** or **DroidCam**: install it on the phone and on the laptop, connect them). The overlay shows on the laptop or projector. The laptop's own webcam is usually camera 0, the phone camera 1. To be sure, with the phone app connected:
+
+```
+python ascent.py cameras --show
+```
+
+It lists every camera number that gives a picture and shows each one (any key = next). On Windows, cameras are tried through DirectShow first and Media Foundation second - Camo often only works through the second; the app does that by itself.
 
 Before you start: tape the **4 printed markers** flat near the corners of the prop wall, and put a **sticker on each of the puppet's hands** in a colour that **no hold has** (neon green or pink are good).
 

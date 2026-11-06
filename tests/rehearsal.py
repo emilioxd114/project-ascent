@@ -873,6 +873,57 @@ def rehearse_auto_scan(gui):
           and "c2" not in ascent.route_names("autoprop"))
 
 
+def rehearse_cameras():
+    """Opening a camera: falls back to the second way (Media Foundation on Windows) when the first can't,
+    waits for a real picture, and says what to do when nothing works."""
+    class FakeCap:
+        works = {}                                  # (index, backend) -> frames until a picture comes
+
+        def __init__(self, index, backend=0):
+            self.key, self.left = (index, backend), FakeCap.works.get((index, backend))
+
+        def isOpened(self):
+            return self.left is not None
+
+        def set(self, *a):
+            return True
+
+        def read(self):
+            if self.left is None:
+                return False, None
+            if self.left > 0:
+                self.left -= 1
+                return True, np.zeros((720, 1280, 3), np.uint8)     # black frames while it warms up
+            return True, np.full((720, 1280, 3), 90, np.uint8)
+
+        def release(self):
+            pass
+
+    real_cap, real_backends, real_sleep = ascent.cv2.VideoCapture, ascent.camera_backends, ascent.time.sleep
+    ascent.cv2.VideoCapture = FakeCap
+    ascent.camera_backends = lambda: [("DirectShow", 700), ("Media Foundation", 1400), ("default", 0)]
+    ascent.time.sleep = lambda s: None
+    try:
+        FakeCap.works = {(0, 700): 0, (1, 1400): 3}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cap = ascent.open_camera(1)
+        check("camera: falls back to Media Foundation when DirectShow can't (phone webcam apps)",
+              cap.key == (1, 1400) and "Media Foundation" in out.getvalue())
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                ascent.open_camera(4)
+            msg = ""
+        except SystemExit as e:
+            msg = str(e.code)
+        check("camera: no camera - says how to find the right number", "python ascent.py cameras" in msg)
+        out = quiet(ascent.cmd_cameras, SimpleNamespace(max=6, show=False))
+        check("cameras: lists the cameras that give a picture", "--camera 0   works (DirectShow" in out
+              and "--camera 1   works (Media Foundation" in out and "--camera 2" not in out, out)
+    finally:
+        ascent.cv2.VideoCapture, ascent.camera_backends, ascent.time.sleep = real_cap, real_backends, real_sleep
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -1057,6 +1108,7 @@ def main():
         rehearse_serve_track(photo)
         rehearse_sticker(photo, mphoto, holds, corners)
         rehearse_auto_scan(gui)
+        rehearse_cameras()
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

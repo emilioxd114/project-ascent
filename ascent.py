@@ -15,6 +15,7 @@ Commands
   python ascent.py live --wall panel --route r1     route drawn on the live camera
   python ascent.py preview --wall panel --route r1  route drawn on the saved photo (demo backup)
   python ascent.py list                             show saved walls and routes
+  python ascent.py cameras --show                   which --camera number is which camera (e.g. the phone)
   python ascent.py serve                            phone as camera: open the printed link on the phone
   python ascent.py track --wall panel --route r1    touches by sticker colour, with sounds (--touch pose: MediaPipe)
   python ascent.py log --climber lena --wall panel --route r1 --result sent    log a climb (sent/tried/fail)
@@ -583,13 +584,69 @@ def capture_photo(cam_index):
     return photo
 
 
-def open_camera(index):
-    cap = cv2.VideoCapture(index, cv2.CAP_DSHOW) if os.name == "nt" else cv2.VideoCapture(index)
+def camera_backends():
+    """Ways to open a camera, best first. On Windows: DirectShow, then Media Foundation (phone-webcam apps
+    such as Camo often only offer that one), then whatever OpenCV picks."""
+    if os.name == "nt":
+        return [("DirectShow", cv2.CAP_DSHOW), ("Media Foundation", cv2.CAP_MSMF), ("default", cv2.CAP_ANY)]
+    return [("default", cv2.CAP_ANY)]
+
+
+def try_camera(index, backend):
+    """Opens a camera and waits up to ~2 s for a real picture (virtual cameras need a moment).
+    Returns (cap, frame) or (None, None)."""
+    cap = cv2.VideoCapture(index, backend)
+    if not cap.isOpened():
+        cap.release()
+        return None, None
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    if not cap.isOpened():
-        sys.exit(f"Camera {index} not found. Try --camera 1")
-    return cap
+    for _ in range(20):
+        ok, frame = cap.read()
+        if ok and frame is not None and frame.size and frame.max() > 0:
+            return cap, frame
+        time.sleep(0.1)
+    cap.release()
+    return None, None
+
+
+def open_camera(index):
+    for name, backend in camera_backends():
+        cap, frame = try_camera(index, backend)
+        if cap is not None:
+            if name != camera_backends()[0][0]:
+                print(f"Camera {index} opened through {name}.")
+            return cap
+    sys.exit(f"Camera {index} not found, or it gives no picture.\n"
+             "  See which cameras work:  python ascent.py cameras\n"
+             "  Phone as webcam: start the app on the phone AND its program on the laptop (Camo / DroidCam\n"
+             "  Client) and connect them first; close Zoom, Teams or other apps that use the camera.")
+
+
+def cmd_cameras(args):
+    """Lists the cameras that give a picture, so you know what to pass to --camera."""
+    print("Looking for cameras (each one takes a moment)...")
+    found = 0
+    for i in range(args.max):
+        for name, backend in camera_backends():
+            cap, frame = try_camera(i, backend)
+            if cap is not None:
+                found += 1
+                h, w = frame.shape[:2]
+                print(f"  --camera {i}   works ({name}, {w}x{h})")
+                if args.show:
+                    view, _ = fit(frame.copy())
+                    put_text(view, f"--camera {i}   any key = next", (16, 34), 0.75, GREEN)
+                    cv2.imshow("Ascent - cameras", view)
+                    cv2.waitKey(0)
+                cap.release()
+                break
+    cv2.destroyAllWindows()
+    if not found:
+        print("No camera gives a picture. For the phone: start the webcam app on the phone and on the laptop,")
+        print("connect them, close other apps that use the camera, then run this again.")
+    else:
+        print("The laptop's own webcam is usually 0. Add --show to see each camera's picture.")
 
 
 def click_corners(photo):
@@ -2745,6 +2802,9 @@ def main():
 
     sub.add_parser("selftest")
     sub.add_parser("list")
+    p = sub.add_parser("cameras", help="list the cameras that work, for --camera")
+    p.add_argument("--max", type=int, default=6, help="how many camera numbers to try")
+    p.add_argument("--show", action="store_true", help="show each camera's picture (any key = next)")
 
     p = sub.add_parser("scan")
     p.add_argument("--wall", required=True)
@@ -2877,7 +2937,8 @@ def main():
                "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track,
                "log": cmd_log, "progress": cmd_progress, "recommend": cmd_recommend,
                "profile": cmd_profile, "safety": cmd_safety, "routes": cmd_routes,
-               "challenge": cmd_challenge, "serve": cmd_serve}[args.cmd]
+               "challenge": cmd_challenge, "serve": cmd_serve,
+               "cameras": cmd_cameras}[args.cmd]
     sys.exit(handler(args) or 0)
 
 

@@ -21,7 +21,7 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Phone track** (`/track`, 6 Nov): record my try from the phone; MediaPipe on the laptop, sounds on the phone with Web Audio, the result into the logbook. Tested headlessly with a scripted hand and in headless Chromium with the real model (no person in the test video); **not yet with a real climber.**
 - **Sticker touch tracking** (`track`, 6 Nov): the demo uses a puppet with a coloured sticker on each hand and the phone as a webcam (Camo/DroidCam, `--camera 1`), the overlay on the laptop/projector. No AI. MediaPipe remains as `--touch pose`. The phone web pages are kept but not used in the demo (on the iPhone the scan lost its photo).
 - **Automatic hold detection** (`scan --auto`, 6 Nov): colour blobs on a plain board, shown for checking (click to remove or add); hand clicking stays as the fallback. Not yet tried on the real prop wall photo.
-- **Tests:** selftest and the rehearsal (131 checks, 132 with MediaPipe), all passing.
+- **Tests:** selftest and the rehearsal (134 checks, 135 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested
