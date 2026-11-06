@@ -709,7 +709,7 @@ def rehearse_serve_track(photo):
         httpd.server_close()
 
 
-def rehearse_sticker(photo, mphoto):
+def rehearse_sticker(photo, mphoto, holds, corners):
     """track with coloured stickers instead of MediaPipe: touches, sounds, two stickers, same-colour holds,
     markers mode, colour by click, nothing without a lock."""
     def video(img, wall_name, frames_script, path, sticker_bgr=(60, 230, 60)):
@@ -784,6 +784,17 @@ def rehearse_sticker(photo, mphoto):
     cv2.circle(frame, (50, 50), 8, (60, 230, 60), -1)
     check("sticker: clicking the sticker teaches its colour", det.sample(frame, 50, 50)
           and det.hands(frame, 0) and not det.sample(frame, 5, 5))
+
+    # a prop wall and a 30 cm puppet: routes fit the puppet's reach
+    pwall = ascent.save_scan("prop", photo, corners, 60.0, 43.0, False,
+                             [{"px": list(map(float, h)), "type": None} for h in holds])
+    made = [quiet(ascent.cmd_generate, SimpleNamespace(wall="prop", name=f"p{i}", moves=5, height=30.0, train=t,
+                                                      level=lv, seed=i, preview=False, by=None))
+            for i, (t, lv) in enumerate([("", "easy"), ("reach", "medium"), ("traverse", "medium"), ("", "hard")])]
+    routes = [ascent.load_route("prop", f"p{i}") for i in range(4)]
+    check("prop wall: routes for a 30 cm puppet (easy, reach, traverse, hard), all within its reach",
+          all(len(r["holds"]) >= 4 and not any("past" in w for w in r["warnings"]) for r in routes),
+          str([len(r["holds"]) for r in routes]))
 
     # markers wall + sticker
     mwall = json.load(open("walls/mpanel/wall.json"))
@@ -977,7 +988,7 @@ def main():
         rehearse_serve_live(photo)
         rehearse_serve_scan(photo, holds, corners, mphoto)
         rehearse_serve_track(photo)
-        rehearse_sticker(photo, mphoto)
+        rehearse_sticker(photo, mphoto, holds, corners)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

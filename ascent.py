@@ -321,6 +321,10 @@ def generate_route(wall, moves=6, height=172.0, train=(), level="medium", seed=N
     traverse = "traverse" in train
     types = [t for t in train if t in HOLD_TYPES.values()]
     rng = random.Random(seed)
+    # Fixed minimums made for people (a move is at least 15 cm, goes at least 5 cm the right way).
+    # A puppet or a small child on a prop wall gets them scaled to its size; people keep them as they are.
+    k = height / 172.0 if height < 120 else 1.0
+    min_move, min_step = 15 * k, 5 * k
 
     if traverse:
         left = [h for h in holds if pos[h["id"]][0] <= 0.3 * W]
@@ -344,13 +348,13 @@ def generate_route(wall, moves=6, height=172.0, train=(), level="medium", seed=N
                     continue
                 p = pos[h["id"]]
                 d = float(np.linalg.norm(p - cur))
-                if d < 15 or d > reach:
+                if d < min_move or d > reach:
                     continue
                 dx, dy = p - cur
                 if traverse:
-                    if dx * direction < 5 or abs(dy) > 0.35 * height:
+                    if dx * direction < min_step or abs(dy) > 0.35 * height:
                         continue
-                elif dy < 5:
+                elif dy < min_step:
                     continue
                 w = math.exp(-((d - target) / (0.15 * height)) ** 2)
                 if "reach" in train:
