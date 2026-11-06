@@ -9,7 +9,7 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Concept:** fundamental decisions, scope, roadmap (04-product.md).
 - **Design:** nine phone screens on the canvas, in two rows (05-design.md).
 - **Prototype** (`ascent.py`): scan with corners, scale, hold tapping and types; markers fallback; rules-based generator with reach guardrails and skill filters; build mode; live overlay with route switching and live generation; never guessing; two-look tracking for venue lighting; full screen; screenshots and recording; wall versioning.
-- **Tests:** selftest and the 19-check rehearsal, all passing.
+- **Tests:** selftest and the 21-check rehearsal, all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested
@@ -33,7 +33,7 @@ Status as of the night of 5 Nov 2026, before the final day.
 
 - Scan the real panel, generate routes, record a demo video.
 - Update the canvas: add a hold-tapping screen, rename "Tap fixed points" to "Tap the four corners", design the Build tab.
-- Small code task: `scan --width --height` options so no typing is needed during the scan (a good first Claude Code exercise).
+- Done (6 Nov): `scan --width --height` options, so no typing is needed during the scan.
 - Later: GPS wall list, safety card, community grading.
 
 ### Group 2 (training and progress)

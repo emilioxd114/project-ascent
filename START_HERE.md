@@ -25,7 +25,7 @@ python ascent.py scan --wall panel
 
 1. Webcam opens. Stand back until the whole panel is in frame, then press **SPACE**.
 2. Click the 4 corners of the climbing area: top-left, top-right, bottom-right, bottom-left. Press **Enter**.
-3. In the console window, type the distance between the two top corners in cm, then the two left corners. Measure the panel once with a tape. Press Enter to skip, but then reach checks are only approximate.
+3. In the console window, type the distance between the two top corners in cm, then the two left corners. Measure the panel once with a tape. Press Enter to skip, but then reach checks are only approximate. Or give the sizes up front and skip the typing: `python ascent.py scan --wall panel --width 300 --height 220` (your measured cm).
 4. Click every hold. After each click you can press **j c s p k** to tag it jug / crimp / sloper / pinch / pocket. Tag at least a few slopers if you want to demo the sloper filter. Press **Enter**.
 
 **Make a route**
@@ -80,7 +80,7 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. 19 checks, all passing.
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. 21 checks, all passing.
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.

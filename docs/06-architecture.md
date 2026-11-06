@@ -7,7 +7,7 @@ Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a
 | Command | What it does |
 | --- | --- |
 | `selftest` | Builds a synthetic wall, views it from another angle, checks the overlay error. No camera needed. |
-| `scan` | Photo (webcam or `--image`) → click 4 corners → type real size in cm → click and tag every hold → save. `--markers` finds the corners from printed markers instead. |
+| `scan` | Photo (webcam or `--image`) → click 4 corners → type real size in cm (or pass `--width` / `--height` in cm to skip the questions) → click and tag every hold → save. `--markers` finds the corners from printed markers instead. |
 | `generate` | Rules-based route; `--train`, `--moves`, `--height`, `--level`, `--seed`, `--preview`. |
 | `build` | Click holds in order on the photo; warns about moves past reach. |
 | `live` | Route on the live camera. Keys: g new route, n next, f full screen, s screenshot, v record, q quit. `--video` replays a file instead of the webcam. |
@@ -88,7 +88,7 @@ The first hold is the start (green), the last the finish (red), the rest the mid
 ## Tests
 
 - `python ascent.py selftest` — install check, overlay error on a synthetic warped wall.
-- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning. 19 checks.
+- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing. 21 checks.
 
 **Not covered:** a real webcam, real windows on Windows, the real panel under venue light.
 

@@ -262,6 +262,25 @@ def main():
         check("re-scan makes version 2", v2["version"] == 2)
         check("version 1 and its routes archived", os.path.exists("walls/panel/archive_v1/routes/r1.json"))
         check("version 2 starts with no routes", ascent.route_names("panel") == [])
+
+        # --- scan --width --height: sizes from the command line, no typing at all
+        gui.strict = True
+        gui.actions = [disp(c) for c in corners] + [("key", 13)] + [disp(h) for h in holds[:6]] + [("key", 13)]
+
+        def no_typing(prompt=""):
+            raise RuntimeError("scan asked a question although --width and --height were given")
+        builtins.input = no_typing
+        ascent.cmd_scan(SimpleNamespace(wall="sized", image="panel.jpg", markers=False, camera=0,
+                                        width=250.0, height=180.0))
+        sized = json.load(open("walls/sized/wall.json"))
+        check("scan --width --height needs no typing",
+              sized["size_cm"] == {"w": 250.0, "h": 180.0, "assumed": False}, str(sized["size_cm"]))
+        try:
+            ascent.positive_cm("0")
+            refused = False
+        except ascent.argparse.ArgumentTypeError:
+            refused = True
+        check("scan refuses a size of 0 cm", refused and ascent.positive_cm("2,5") == 2.5)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

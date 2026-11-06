@@ -8,6 +8,7 @@ Commands
   python ascent.py scan --wall panel                photograph a wall, tap corners, tap holds
   python ascent.py scan --wall panel --image p.jpg  same, from a photo file
   python ascent.py scan --wall panel --markers      use the printed markers instead of tapping corners
+  python ascent.py scan --wall panel --width 300 --height 220   wall size in cm, so nothing is typed
   python ascent.py generate --wall panel --train reach --moves 6 --height 172 --preview
   python ascent.py build --wall panel               tap holds in order to make your own route
   python ascent.py live --wall panel --route r1     route drawn on the live camera
@@ -585,6 +586,16 @@ def ask_number(prompt, default=None):
         print("Please type a number in centimetres.")
 
 
+def positive_cm(raw):
+    try:
+        v = float(str(raw).replace(",", "."))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{raw}' is not a number in centimetres")
+    if v <= 0:
+        raise argparse.ArgumentTypeError("must be more than 0 cm")
+    return v
+
+
 def cmd_scan(args):
     photo = cv2.imread(args.image) if args.image else capture_photo(args.camera)
     if photo is None:
@@ -604,13 +615,23 @@ def cmd_scan(args):
     print("\nScale lets the app check whether a move is within reach.")
     top = np.linalg.norm(corners[1] - corners[0])
     side = np.linalg.norm(corners[3] - corners[0])
-    w_cm = ask_number("Distance between the two top corners, in cm (Enter to skip): ", default=-1)
+    w_arg, h_arg = getattr(args, "width", None), getattr(args, "height", None)
+    if w_arg is not None:
+        w_cm = float(w_arg)
+        print(f"Width from --width: {w_cm:g} cm.")
+    else:
+        w_cm = ask_number("Distance between the two top corners, in cm (Enter to skip): ", default=-1)
     assumed = w_cm < 0
     if assumed:
         w_cm = 300.0
         print("Skipped. Assuming 300 cm wide - reach checks will be approximate.")
     h_default = round(w_cm * side / top)
-    h_cm = ask_number(f"Distance between the two left corners, in cm (Enter for about {h_default}): ", default=h_default)
+    if h_arg is not None:
+        h_cm = float(h_arg)
+        print(f"Height from --height: {h_cm:g} cm.")
+    else:
+        h_cm = ask_number(f"Distance between the two left corners, in cm (Enter for about {h_default}): ",
+                          default=h_default)
 
     holds = click_holds(photo, corners)
     R = rectify_matrix(corners, w_cm, h_cm)
@@ -911,6 +932,8 @@ def main():
     p.add_argument("--image")
     p.add_argument("--markers", action="store_true")
     p.add_argument("--camera", type=int, default=0)
+    p.add_argument("--width", type=positive_cm, help="wall width in cm (top-left to top-right corner); skips the question")
+    p.add_argument("--height", type=positive_cm, help="wall height in cm (top-left to bottom-left corner); skips the question")
 
     p = sub.add_parser("generate")
     p.add_argument("--wall", required=True)
