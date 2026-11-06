@@ -73,6 +73,8 @@ Screens asked for: log a boulder · progress dashboard (stats + milestones) · t
 
 Notes from the project: the smartwatch is not in ArtRock's brief, and looking at a watch mid-climb is impossible. Rewards for minors must not favour difficulty or streaks.
 
+**Built in the prototype (6 Nov):** logbook (`log`), progress dashboard as text (`progress`), rule-based recommendations (`recommend`). Levels give no points for grade and no streaks; minors are never told to climb harder; a rehab level is only ever the therapist's.
+
 ### Group 3 · Community and app basics
 
 Features: share and connect (boulders, achievements) · video library (upload, share beta, fail videos) · chat · blog · team sessions (train together) · feedback area · sign-up, languages (DE/EN), data security.

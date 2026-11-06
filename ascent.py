@@ -17,6 +17,8 @@ Commands
   python ascent.py track --wall panel --route r1    record my try: hand tracking with sounds (needs mediapipe)
   python ascent.py log --climber lena --wall panel --route r1 --result sent    log a climb (sent/tried/fail)
   python ascent.py log --climber lena               show Lena's logbook
+  python ascent.py progress --climber lena          stats, skills / level / rehab sessions, milestones
+  python ascent.py recommend --climber lena --wall panel --make 3    what to train next, by rules
 
 Keys in the windows
   scan corners : click 4 corners (top-left, top-right, bottom-right, bottom-left), u = undo, Enter = done
@@ -664,13 +666,15 @@ def cmd_scan(args):
     print(f"Next: python ascent.py generate --wall {args.wall} --preview")
 
 
-def save_route(wall, ids, name, how, height, train=()):
+def save_route(wall, ids, name, how, height, train=(), by=None):
     warnings = route_warnings(wall, ids, height)
     route = {
         "name": name, "wall": wall["name"], "wall_version": wall["version"], "holds": ids,
         "estimated_grade": estimate_grade(wall, ids, height), "train": list(train), "made_by": how,
         "height_cm": height, "created": time.strftime("%Y-%m-%d %H:%M"), "warnings": warnings,
     }
+    if by:
+        route["by"] = climber_id(by)           # who set it - optional, older routes have no "by"
     save_json(wall_path(wall["name"], "routes", f"{name}.json"), route)
     return route
 
@@ -695,7 +699,7 @@ def parse_train(text):
     return [t.strip().lower() for t in text.split(",") if t.strip()] if text else []
 
 
-def make_generated_route(wall, moves, height, train, level, seed=None, name=None):
+def make_generated_route(wall, moves, height, train, level, seed=None, name=None, by=None):
     """Generate, save and return a route, or None if nothing fits. Shared by 'generate' and the live 'g' key."""
     typed = {h.get("type") for h in wall["holds"]}
     for t in train:
@@ -711,7 +715,7 @@ def make_generated_route(wall, moves, height, train, level, seed=None, name=None
     if not ids:
         return None
     name = name or next_route_name(wall["name"])
-    route = save_route(wall, ids, name, "generated", height, train)
+    route = save_route(wall, ids, name, "generated", height, train, by)
     print(f"Route '{name}': holds {ids}, grade {route['estimated_grade']} (estimated)")
     for w in route["warnings"]:
         print("  ! " + w)
@@ -721,7 +725,7 @@ def make_generated_route(wall, moves, height, train, level, seed=None, name=None
 def cmd_generate(args):
     wall, ref = load_wall(args.wall)
     route = make_generated_route(wall, args.moves, args.height, parse_train(args.train), args.level,
-                                 args.seed, args.name)
+                                 args.seed, args.name, getattr(args, "by", None))
     if route is None:
         sys.exit("No route fits these settings. Try fewer moves, an easier level, or tap more holds.")
     print(f"Climb it: python ascent.py live --wall {args.wall} --route {route['name']}")
@@ -767,7 +771,7 @@ def cmd_build(args):
             sys.exit("Cancelled.")
     cv2.destroyAllWindows()
     name = args.name or next_route_name(args.wall)
-    route = save_route(wall, chosen, name, "built", args.height)
+    route = save_route(wall, chosen, name, "built", args.height, by=getattr(args, "by", None))
     print(f"Saved route '{name}': {chosen}, grade {route['estimated_grade']} (estimated)")
     print(f"Climb it: python ascent.py live --wall {args.wall} --route {name}")
 
@@ -1016,6 +1020,228 @@ def cmd_log(args):
         note = f"  - {e['note']}" if e.get("note") else ""
         print(f"  {e['date']}  {e['wall']} v{e['wall_version']} {e['route']:<6} {e.get('estimated_grade') or '?':<4} "
               f"{e['result']:<5} {skills}{extra}{note}")
+
+
+# ---------------------------------------------------------------- progress and recommendations (rules, no AI)
+
+PROFILE_DIR = "profiles"
+GOALS = ("train", "play", "rehab")        # Lena, Max, Laura
+SKILLS = list(HOLD_TYPES.values()) + ["reach", "traverse"]
+LEVELS = list(LEVEL_TARGET)
+
+
+def load_profile(climber):
+    p = os.path.join(PROFILE_DIR, f"{climber_id(climber)}.json")
+    if not os.path.exists(p):
+        return None
+    with open(p, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def climber_settings(args):
+    """Height, level, goal and age group: from the options if given, else the profile, else defaults."""
+    prof = load_profile(args.climber) or {}
+    rehab = prof.get("rehab") or {}
+    s = {
+        "height": getattr(args, "height", None) or prof.get("height_cm") or 172.0,
+        "level": getattr(args, "level", None) or rehab.get("level") or prof.get("level") or "medium",
+        "goal": getattr(args, "goal", None) or prof.get("goal") or "train",
+        "minor": bool(prof.get("minor")),
+        "rehab": rehab, "profile": bool(prof),
+    }
+    if s["goal"] == "rehab" and rehab.get("level"):
+        s["level"] = rehab["level"]           # only the therapist changes a rehab level
+    return s
+
+
+def entry_skills(e):
+    return set(e.get("hold_types") or []) | set(e.get("train") or [])
+
+
+def week_of(date):
+    return time.strftime("%G-W%V", time.strptime(date[:10], "%Y-%m-%d"))
+
+
+def routes_set_by(climber):
+    """Routes this climber made (generate/build --by), with who else sent them."""
+    cid = climber_id(climber)
+    out = []
+    if not os.path.isdir(DATA_DIR):
+        return out
+    for wname in sorted(os.listdir(DATA_DIR)):
+        p = wall_path(wname, "wall.json")
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as f:
+            version = json.load(f)["version"]
+        for rname in route_names(wname):
+            r = load_route(wname, rname)
+            if r.get("by") == cid:
+                others = [c for c in climbed_by(wname, version, rname) if c != cid]
+                out.append((wname, rname, others))
+    return out
+
+
+def badges(climber, entries):
+    """Milestones reward consistency, variety, routes set and climbing together - never the hardest grade,
+    never a streak that punishes a rest day."""
+    routes = {(e["wall"], e["wall_version"], e["route"]) for e in entries}
+    types = set().union(*[set(e.get("hold_types") or []) for e in entries]) if entries else set()
+    weeks = {week_of(e["date"]) for e in entries}
+    out = []
+    if entries:
+        out.append("First climb logged")
+    if any(e["result"] == "sent" for e in entries):
+        out.append("First send")
+    if len(routes) >= 5:
+        out.append("Explorer: 5 different routes")
+    if types >= set(HOLD_TYPES.values()):
+        out.append("All-rounder: every hold type")
+    if len(weeks) >= 4:
+        out.append("Regular: climbed in 4 different weeks (rest weeks are fine)")
+    if any(others for _, _, others in routes_set_by(climber)):
+        out.append("Route setter: someone else sent your route")
+    if any(e.get("challenge") for e in entries):
+        out.append("Team player: finished a challenge")
+    return out
+
+
+def play_points(climber, entries):
+    """Max's level. Points for showing up, trying new routes, new hold types and setting routes others
+    climb. No points for grade, so a harder route is never worth more."""
+    days = {e["date"][:10] for e in entries}
+    routes = {(e["wall"], e["wall_version"], e["route"]) for e in entries}
+    types = set().union(*[set(e.get("hold_types") or []) for e in entries]) if entries else set()
+    repeats = sum(len(others) for _, _, others in routes_set_by(climber))
+    pts = len(days) + 2 * len(routes) + len(types) + 3 * repeats + 2 * sum(1 for e in entries if e.get("challenge"))
+    return pts, 1 + pts // 10, 10 - pts % 10
+
+
+def bar(n, total, width=20):
+    k = int(round(width * n / total)) if total else 0
+    return "#" * k + "." * (width - k)
+
+
+def cmd_progress(args):
+    cid = climber_id(args.climber)
+    st = climber_settings(args)
+    entries = load_log(cid)["entries"]
+    if not entries:
+        print(f"Nothing logged for {cid} yet. Log a climb: python ascent.py log --climber {cid} "
+              "--wall panel --route r1 --result sent")
+        return
+    res = {r: sum(1 for e in entries if e["result"] == r) for r in RESULTS}
+    days = sorted({e["date"][:10] for e in entries})
+    routes = {(e["wall"], e["wall_version"], e["route"]) for e in entries}
+    secs = sum((e.get("attempt") or {}).get("seconds") or 0 for e in entries)
+    print(f"Progress of {cid}  (goal: {st['goal']})")
+    print(f"  {len(entries)} climbs on {len(days)} days, {len(routes)} different routes")
+    print(f"  sent {res['sent']}, tried {res['tried']}, fail {res['fail']}"
+          + (f", {secs / 60:.1f} min on the wall (camera)" if secs else ""))
+
+    if st["goal"] == "rehab":
+        weeks = {}
+        for e in entries:
+            weeks.setdefault(week_of(e["date"]), set()).add(e["date"][:10])
+        target = st["rehab"].get("sessions_per_week")
+        print("\n  Sessions per week" + (f" (therapist's goal: {target})" if target else ""))
+        for w in sorted(weeks)[-6:]:
+            n = len(weeks[w])
+            mark = "  goal met" if target and n >= target else ""
+            print(f"    {w}  {'#' * n:<8} {n}{mark}")
+        lvl = st["rehab"].get("level")
+        if lvl:
+            print(f"  Level set by the therapist: {lvl}")
+        print("\n  This is a record for you and your therapist. It does not judge whether a movement is safe.")
+        return
+
+    if st["goal"] == "play":
+        pts, level, to_next = play_points(cid, entries)
+        print(f"\n  Level {level}  ({pts} points, {to_next} to the next level)")
+        print("  Points come from climbing days, new routes, new hold types and routes you set that others")
+        print("  climb - never from grade. Rest days cost nothing.")
+    else:
+        print("\n  Skills (climbs with each kind of hold or move)")
+        counts = {k: sum(1 for e in entries if k in entry_skills(e)) for k in SKILLS}
+        sends = {k: sum(1 for e in entries if k in entry_skills(e) and e["result"] == "sent") for k in SKILLS}
+        for k in SKILLS:
+            print(f"    {k:<9} {bar(counts[k], len(entries))} {counts[k]:>3} climbs, {sends[k]} sent")
+    got = badges(cid, entries)
+    if got:
+        print("\n  Milestones")
+        for b in got:
+            print("    * " + b)
+    print(f"\n  What next? python ascent.py recommend --climber {cid} --wall {entries[-1]['wall']}")
+
+
+def recommendations(climber, wall, st):
+    """Rules, no AI. Returns (reasons, train, level, existing) - every line says why."""
+    entries = [e for e in load_log(climber)["entries"]]
+    typed = {h.get("type") for h in wall["holds"] if h.get("type")}
+    available = [k for k in SKILLS if k in typed or k in ("reach", "traverse")]
+    reasons = []
+    level = st["level"]
+    if not entries:
+        reasons.append("Nothing logged yet, so start with an easy route to warm up.")
+        return reasons, [], "easy" if st["goal"] != "rehab" else level, []
+
+    counts = {k: sum(1 for e in entries if k in entry_skills(e)) for k in available}
+    low = min(counts.values())
+    rare = [k for k in available if counts[k] == low]
+    pick = rare[0]
+    reasons.append(f"You rarely climb {pick}{'s' if pick in HOLD_TYPES.values() else ''} "
+                   f"({counts[pick]} of your {len(entries)} climbs).")
+    if pick in HOLD_TYPES.values() and pick not in typed:
+        reasons.append(f"No hold on this wall is tagged {pick}.")
+
+    recent = entries[-5:]
+    fails = sum(1 for e in recent if e["result"] == "fail")
+    sends = sum(1 for e in recent if e["result"] == "sent")
+    i = LEVELS.index(level)
+    if st["goal"] == "rehab":
+        reasons.append(f"Level {level}, as set by your therapist. Only the therapist changes it.")
+    elif fails >= 3 and i > 0:
+        level = LEVELS[i - 1]
+        reasons.append(f"{fails} of your last {len(recent)} climbs did not get going, so one level easier: {level}.")
+    elif sends == len(recent) == 5 and i < len(LEVELS) - 1 and st["goal"] == "train" and not st["minor"]:
+        reasons.append(f"You sent your last 5 climbs. If you feel like it, try {LEVELS[i + 1]} "
+                       "(--level " + LEVELS[i + 1] + "). Variety helps as much as difficulty.")
+    else:
+        reasons.append(f"Level {level}" + (" - new skills before harder grades." if st["goal"] == "play" else "."))
+
+    sent_by_me = {(e["wall"], e["wall_version"], e["route"]) for e in entries if e["result"] == "sent"}
+    existing = []
+    for rname in route_names(wall["name"]):
+        r = load_route(wall["name"], rname)
+        if (wall["name"], wall["version"], rname) in sent_by_me or r.get("wall_version") != wall["version"]:
+            continue
+        types = {h["id"]: h.get("type") for h in wall["holds"]}
+        skills = set(r.get("train") or []) | {types.get(i) for i in r["holds"]}
+        if pick in skills:
+            existing.append((rname, r.get("estimated_grade"), len(climbed_by(wall["name"], wall["version"], rname))))
+    return reasons, [pick], level, existing[:3]
+
+
+def cmd_recommend(args):
+    cid = climber_id(args.climber)
+    st = climber_settings(args)
+    wall, _ = load_wall(args.wall)
+    reasons, train, level, existing = recommendations(cid, wall, st)
+    print(f"Recommendation for {cid} on {wall['name']}  (rules, not AI - each line says why)")
+    for r in reasons:
+        print("  - " + r)
+    t = f" --train {','.join(train)}" if train else ""
+    cmd = f"python ascent.py generate --wall {wall['name']}{t} --level {level} --height {st['height']:g} --by {cid}"
+    print(f"\n  Make a route: {cmd}")
+    for name, grade, n in existing:
+        print(f"  Or climb {name} ({grade}, estimated) - {n} {'person' if n == 1 else 'people'} sent it")
+    if args.make:
+        print()
+        for _ in range(args.make):
+            if make_generated_route(wall, args.moves, st["height"], train, level, by=cid) is None:
+                print("No more routes fit these settings.")
+                break
+        print(f"Climb them: python ascent.py live --wall {wall['name']} --route <name>")
 
 
 # ---------------------------------------------------------------- motion tracking with audio
@@ -1352,11 +1578,13 @@ def main():
     p.add_argument("--level", choices=list(LEVEL_TARGET), default="medium")
     p.add_argument("--seed", type=int)
     p.add_argument("--preview", action="store_true")
+    p.add_argument("--by", help="who set the route (optional, counts for their progress)")
 
     p = sub.add_parser("build")
     p.add_argument("--wall", required=True)
     p.add_argument("--name")
     p.add_argument("--height", type=float, default=172)
+    p.add_argument("--by", help="who set the route (optional, counts for their progress)")
 
     p = sub.add_parser("live")
     p.add_argument("--wall", required=True)
@@ -1380,6 +1608,19 @@ def main():
     p.add_argument("--mute", action="store_true", help="no sounds, messages only")
     p.add_argument("--climber", help="save the attempt in this climber's logbook")
 
+    p = sub.add_parser("progress", help="stats, skills, level or rehab sessions, milestones")
+    p.add_argument("--climber", required=True)
+    p.add_argument("--goal", choices=GOALS, help="train (skills), play (levels), rehab (sessions); default: profile")
+
+    p = sub.add_parser("recommend", help="what to climb next, by rules")
+    p.add_argument("--climber", required=True)
+    p.add_argument("--wall", required=True)
+    p.add_argument("--goal", choices=GOALS)
+    p.add_argument("--height", type=positive_cm, help="climber height in cm; default: profile, else 172")
+    p.add_argument("--level", choices=LEVELS, help="default: profile, else medium")
+    p.add_argument("--make", type=int, default=0, help="also generate this many routes")
+    p.add_argument("--moves", type=int, default=6)
+
     p = sub.add_parser("log", help="logbook: log a climb, or show a climber's history")
     p.add_argument("--climber", required=True)
     p.add_argument("--wall")
@@ -1396,7 +1637,7 @@ def main():
     args = ap.parse_args()
     handler = {"selftest": cmd_selftest, "scan": cmd_scan, "generate": cmd_generate, "build": cmd_build,
                "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track,
-               "log": cmd_log}[args.cmd]
+               "log": cmd_log, "progress": cmd_progress, "recommend": cmd_recommend}[args.cmd]
     sys.exit(handler(args) or 0)
 
 

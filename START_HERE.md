@@ -80,7 +80,7 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook. 33 checks (34 with MediaPipe installed), all passing.
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress and recommendations. 44 checks (45 with MediaPipe installed), all passing.
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.
@@ -109,6 +109,15 @@ python ascent.py log --climber lena
 ```
 
 Results: **sent** (reached the top in order), **tried** (got past the start), **fail** (didn't get going). Add `--note "slipped off 4"` or `--date 2026-11-02`. `--undo` removes the last entry. Logbooks are personal data: they stay in `logbook/` on this laptop and are not pushed to GitHub.
+
+## Progress and what to climb next
+
+```
+python ascent.py progress --climber lena
+python ascent.py recommend --climber lena --wall panel --make 3
+```
+
+`progress` shows climbs, sends and, depending on the goal, skills (train), a level (play) or sessions per week against the therapist's goal (rehab), plus milestones. Choose the view with `--goal`, or set it once in the climber's profile. `recommend` says what to train next and why ("You rarely climb pinches"); `--make 3` generates three such routes. Add `--by lena` to `generate` or `build` to record who set a route.
 
 ## Re-scanning after a reset
 

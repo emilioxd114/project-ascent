@@ -8,6 +8,8 @@ synthetic video of a wall seen from a moving camera. Run from the repo root:
 """
 
 import builtins
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -216,6 +218,72 @@ def rehearse_log():
     check("log: names become safe file names", ascent.climber_id("Lena M\u00fcller") == "lena_mueller")
 
 
+def quiet(fn, *a, **kw):
+    """Runs fn and returns what it printed."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fn(*a, **kw)
+    return buf.getvalue()
+
+
+def rehearse_progress():
+    """Progress, milestones, levels without grade points, rule-based recommendations."""
+    wall = json.load(open("walls/tw/wall.json"))
+    kinds = ["jug", "jug", "crimp", "sloper", "jug", "pinch", "crimp", "pocket", "jug", "sloper"]
+    for i, h in enumerate(wall["holds"]):
+        h["type"] = kinds[i % len(kinds)]
+    ascent.save_json("walls/tw/wall.json", wall)
+    log = lambda c, r, res, d: ascent.cmd_log(SimpleNamespace(climber=c, wall="tw", route=r, result=res,
+                                                              date=ascent.valid_date(d), note=None, undo=False))
+    quiet(ascent.cmd_generate, SimpleNamespace(wall="tw", name="j1", moves=5, height=172, train="jug",
+                                               level="easy", seed=3, preview=False, by="max"))
+    check("generate --by records who set the route", ascent.load_route("tw", "j1").get("by") == "max")
+    for d in ("2026-10-05", "2026-10-13", "2026-10-21", "2026-11-02"):
+        quiet(log, "nora", "j1", "sent", d)
+    out = quiet(ascent.cmd_progress, SimpleNamespace(climber="nora", goal=None))
+    check("progress shows skills and milestones", "Skills" in out and "Regular: climbed in 4 different weeks" in out
+          and "Route setter" not in out, out.splitlines()[0])
+    check("route setter milestone when someone else sends your route",
+          "Route setter: someone else sent your route" in ascent.badges("max", ascent.load_log("max")["entries"]))
+
+    e = ascent.load_log("nora")["entries"]
+    harder = [dict(x, estimated_grade="~7a") for x in e]
+    check("play level: a harder grade earns no extra points",
+          ascent.play_points("nora", e)[0] == ascent.play_points("nora", harder)[0])
+    out = quiet(ascent.cmd_progress, SimpleNamespace(climber="nora", goal="play"))
+    check("progress --goal play shows a level", "Level " in out and "never from grade" in out)
+
+    rec = lambda c, **kw: ascent.recommendations(c, wall, ascent.climber_settings(
+        SimpleNamespace(climber=c, height=None, level=None, goal=None, **kw)))
+    reasons, train, level, existing = rec("nora")
+    check("recommend: the skill she rarely climbs", train and train[0] not in ("jug",), f"{train} {reasons[0]}")
+    for d in ("2026-11-03", "2026-11-04", "2026-11-05"):
+        quiet(log, "nora", "j1", "fail", d)
+    reasons, train, level, _ = rec("nora")
+    check("recommend: easier after 3 fails", level == "easy" or "easier" in " ".join(reasons), level)
+
+    os.makedirs("profiles", exist_ok=True)
+    ascent.save_json("profiles/kid.json", {"name": "kid", "goal": "train", "level": "easy", "minor": True})
+    ascent.save_json("profiles/pat.json", {"name": "pat", "goal": "rehab", "level": "medium",
+                                           "rehab": {"level": "easy", "sessions_per_week": 2}})
+    for d in ("2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"):
+        quiet(log, "kid", "j1", "sent", d)
+        quiet(log, "pat", "j1", "fail", d)
+    _, _, level, _ = rec("kid")
+    check("recommend: never suggests harder to a minor", level == "easy" and "try" not in " ".join(rec("kid")[0]))
+    reasons, _, level, _ = rec("pat")
+    check("recommend: rehab level stays the therapist's", level == "easy" and "therapist" in " ".join(reasons))
+    out = quiet(ascent.cmd_progress, SimpleNamespace(climber="pat", goal=None))
+    check("progress for rehab: sessions against the therapist's goal, no safety judgement",
+          "therapist's goal: 2" in out and "does not judge" in out)
+    before = set(ascent.route_names("tw"))
+    quiet(ascent.cmd_recommend, SimpleNamespace(climber="nora", wall="tw", goal=None, height=165.0, level=None,
+                                                make=2, moves=5))
+    made = [ascent.load_route("tw", n) for n in set(ascent.route_names("tw")) - before]
+    check("recommend --make generates routes set by the climber",
+          len(made) == 2 and all(r.get("by") == "nora" and r["height_cm"] == 165.0 for r in made))
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -391,6 +459,7 @@ def main():
 
         rehearse_track(gui, photo, holds, corners)
         rehearse_log()
+        rehearse_progress()
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

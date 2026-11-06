@@ -8,13 +8,15 @@ Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a
 | --- | --- |
 | `selftest` | Builds a synthetic wall, views it from another angle, checks the overlay error. No camera needed. |
 | `scan` | Photo (webcam or `--image`) → click 4 corners → type real size in cm (or pass `--width` / `--height` in cm to skip the questions) → click and tag every hold → save. `--markers` finds the corners from printed markers instead. |
-| `generate` | Rules-based route; `--train`, `--moves`, `--height`, `--level`, `--seed`, `--preview`. |
-| `build` | Click holds in order on the photo; warns about moves past reach. |
+| `generate` | Rules-based route; `--train`, `--moves`, `--height`, `--level`, `--seed`, `--preview`, `--by NAME` (who set it, optional). |
+| `build` | Click holds in order on the photo; warns about moves past reach. `--by NAME` optional. |
 | `live` | Route on the live camera. Keys: g new route, n next, f full screen, s screenshot, v record, q quit. `--video` replays a file instead of the webcam. |
 | `preview` | Route drawn on the saved photo — the no-camera backup. |
 | `list` | Walls and routes. |
 | `track` | "Record my try": the route on the live camera plus MediaPipe hand tracking; a sound for each hold reached in order, an alert for an off-route or out-of-order hold. Keys: m sound on/off, q stop. `--video`, `--mute`, `--touch-cm`, `--pose-model`. Needs `pip install mediapipe`. `--climber NAME` saves the camera's guess in the logbook. |
 | `log` | Logbook. `log --climber lena --wall panel --route r1 --result sent\|tried\|fail [--note ...] [--date YYYY-MM-DD]` adds a climb; `log --climber lena` shows the history; `--undo` removes the last entry. |
+| `progress` | `--climber NAME [--goal train\|play\|rehab]`: counts, then skills (train), level (play) or sessions per week (rehab), then milestones. |
+| `recommend` | `--climber NAME --wall W [--height --level --goal] [--make N]`: what to climb next, every line with its reason; `--make` generates N routes set by the climber. |
 
 ## Data on disk
 
@@ -55,6 +57,8 @@ walls/<wall>/
 ```
 
 The first hold is the start (green), the last the finish (red), the rest the middle (blue).
+
+Routes may also have `"by": "max"` (who set them, from `--by`); older routes without it still load.
 
 **logbook/&lt;climber&gt;.json** — one file per person, so one person can be deleted from everything (GDPR question 6). Kept out of git.
 
@@ -104,6 +108,16 @@ The first hold is the start (green), the last the finish (red), the rest the mid
 - **Sounds:** four short tones made with the standard library at start-up; played without waiting through winsound (Windows), afplay (macOS) or paplay/aplay (Linux), otherwise the terminal bell. No sound files in git.
 - **Privacy:** no video is saved, nothing leaves the laptop; the screen and console say that an AI model is tracking the body (AI Act Art. 50) and that it does not judge whether a movement is safe.
 
+## Progress and recommendations (rules, no AI)
+
+Settings come from the options, else the climber's profile (`profiles/<name>.json`), else height 172, level medium, goal train.
+
+- **train (Lena) - skills:** for each hold type plus reach and traverse, how many logged climbs had it (route hold types and `--train` tags) and how many were sent.
+- **play (Max) - level:** points = climbing days + 2 per different route + 1 per hold type tried + 3 per send of a route you set by someone else + 2 per finished challenge. Level = 1 + points / 10. **No points for grade**, no streaks: a rest day costs nothing.
+- **rehab (Laura) - sessions:** climbing days per ISO week against the therapist's `sessions_per_week`, and the therapist's level. Always says it does not judge whether a movement is safe.
+- **Milestones:** first climb, first send, 5 different routes, every hold type, 4 different weeks, someone else sent your route, finished a challenge. Never a hardest-grade milestone.
+- **Recommendation rules:** (1) the skill available on this wall that the climber has climbed least → generate with `--train` that skill, and list up to 3 existing routes with it not yet sent; (2) 3 or more of the last 5 climbs were `fail` → one level easier; (3) all of the last 5 sent → *offer* one level harder, only for goal train and adults; minors and play never get "harder"; (4) rehab always uses the therapist's level. No log yet → an easy warm-up route.
+
 ## Route generator (rules, no AI)
 
 - **Reach** = 0.55 × climber height (95 cm for 172 cm). No move may exceed it.
@@ -118,7 +132,7 @@ The first hold is the start (green), the last the finish (red), the rest the mid
 ## Tests
 
 - `python ascent.py selftest` — install check, overlay error on a synthetic warped wall.
-- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), logbook (log, undo, N people climbed this, names). 33 checks, plus one that runs the real MediaPipe model when it is installed.
+- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed). 44 checks, plus one that runs the real MediaPipe model when it is installed.
 
 **Not covered:** a real webcam, real windows on Windows, the real panel under venue light.
 
