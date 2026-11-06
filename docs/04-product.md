@@ -38,7 +38,7 @@ Mapping a custom wall is the real bottleneck: if it takes a route setter an hour
 
 1. **Map the route, not the wall** — tap only the 8 holds of a route instead of all 200. Dissolves the problem for casual use.
 2. **Tap one blue hold, get all the blue ones** — colour sets select at once.
-3. **Detect, then correct** — colour segmentation finds most holds on a plain wall; the person fixes mistakes.
+3. **Detect, then correct** — colour segmentation finds most holds on a plain wall; the person fixes mistakes. **Built on 6 Nov for the prop wall** (`scan --auto`).
 4. **Point instead of tap** — a crosshair registers the hold under it after half a second.
 5. **Touch the holds** — someone walks along touching each hold while the camera watches; body tracking registers it.
 6. **Everyone does a little** — each user adds a few holds; the map completes over a week.

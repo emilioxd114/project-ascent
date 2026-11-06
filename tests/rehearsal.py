@@ -806,6 +806,58 @@ def rehearse_sticker(photo, mphoto, holds, corners):
     check("sticker: works on a markers wall", s["result"] == "sent" and sounds[-1] == "top", f"{s['result']} {sounds}")
 
 
+def rehearse_auto_scan(gui):
+    """scan --auto: holds found on a plain board, shown, one wrong one removed, one missed one added."""
+    gui.install()
+    def score(det, holds):
+        P, T = np.array([d["px"] for d in det]), np.array(holds, float)
+        d = np.linalg.norm(T[:, None] - P[None], axis=2)
+        return int((d.min(axis=1) < 10).sum()), int((d.min(axis=0) >= 10).sum())
+
+    results = []
+    for seed in (5, 9, 23):
+        photo, holds, corners = make_wall_photo(seed=seed)
+        results.append(score(ascent.detect_holds(photo, corners), holds))
+    check("auto holds: finds the holds on a plain board, no false ones",
+          all(f >= 25 and x <= 1 for f, x in results), str(results))
+    photo, holds, corners = make_wall_photo(seed=5)
+    xx = np.mgrid[0:720, 0:1280][1]
+    lit = np.clip(photo * (0.45 + 0.75 * xx / 1280)[..., None], 0, 255).astype(np.uint8)
+    f, x = score(ascent.detect_holds(lit, corners), holds)
+    check("auto holds: uneven light (dark on the left, bright on the right)", f >= 24 and x <= 5, f"{f} found, {x} false")
+    det = ascent.detect_holds(photo, corners)
+    truth = {0: "black", 1: "yellow", 2: "blue", 3: "red", 4: "orange"}         # make_wall_photo's colours
+    named = [(d["colour"], truth[int(np.argmin(np.linalg.norm(np.array(holds) - d["px"], axis=1))) % 5]) for d in det]
+    check("auto holds: hold colours named", sum(a == b for a, b in named) >= 0.9 * len(named),
+          f"{sum(a == b for a, b in named)}/{len(named)}")
+
+    # the scan with markers: corners found, holds found, the markers themselves are not holds
+    mphoto, mholds, _ = make_wall_photo(seed=9, markers=True)
+    cv2.imwrite("auto_m.jpg", mphoto)
+    found = ascent.detect_holds(mphoto, ascent.order_corners(
+        [c.mean(axis=0) for c in ascent.aruco_detect(cv2.cvtColor(mphoto, cv2.COLOR_BGR2GRAY)).values()]),
+        {str(k): v.tolist() for k, v in ascent.aruco_detect(cv2.cvtColor(mphoto, cv2.COLOR_BGR2GRAY)).items()})
+    _, ms = ascent.fit(mphoto)
+    grid = [(x, y) for x in range(260, 1020, 10) for y in range(100, 640, 10)]
+    empty = max(grid, key=lambda p: min((p[0] - a) ** 2 + (p[1] - b) ** 2 for a, b in mholds))
+    wrong = found[3]["px"]
+    gui.strict = True
+    gui.actions = [("click", wrong[0] * ms, wrong[1] * ms),            # remove one
+                   ("click", empty[0] * ms, empty[1] * ms), ("key", "s"),   # add one, tag it sloper
+                   ("click", 1, 1), ("key", "u"),                      # a stray click, undone
+                   ("key", 13)]
+    quiet(ascent.cmd_scan, SimpleNamespace(wall="autoprop", image="auto_m.jpg", markers=True, camera=0, auto=True,
+                                           width=60.0, height=45.0))
+    w = json.load(open("walls/autoprop/wall.json"))
+    pxs = [h["px"] for h in w["holds"]]
+    check("scan --auto: one removed, one added and tagged, markers are not holds",
+          len(w["holds"]) == len(found) and wrong not in pxs and w["holds"][-1]["type"] == "sloper"
+          and w["mode"] == "markers" and all(h.get("colour") for h in w["holds"]), f"{len(w['holds'])} holds")
+    gen = quiet(ascent.cmd_generate, SimpleNamespace(wall="autoprop", name="a1", moves=5, height=30.0, train="",
+                                                     level="medium", seed=1, preview=False, by=None))
+    check("scan --auto: a route can be made for a 30 cm puppet", "Route 'a1'" in gen, gen.strip()[:80])
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -989,6 +1041,7 @@ def main():
         rehearse_serve_scan(photo, holds, corners, mphoto)
         rehearse_serve_track(photo)
         rehearse_sticker(photo, mphoto, holds, corners)
+        rehearse_auto_scan(gui)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

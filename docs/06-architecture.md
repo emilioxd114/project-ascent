@@ -8,7 +8,7 @@ Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a
 | --- | --- |
 | `serve` | Phone as camera: HTTPS server on 0.0.0.0:8443 (`--port`, `--host`, `--code`), prints one phone link with the laptop's IP and an access code. One page with three tabs: See a route, Scan a wall, Record my try (`#live`, `#scan`, `#track`; the addresses `/live`, `/scan`, `/track` open the same page on that tab). |
 | `selftest` | Builds a synthetic wall, views it from another angle, checks the overlay error. No camera needed. |
-| `scan` | Photo (webcam or `--image`) → click 4 corners → type real size in cm (or pass `--width` / `--height` in cm to skip the questions) → click and tag every hold → save. `--markers` finds the corners from printed markers instead. |
+| `scan` | Photo (webcam or `--image`) → click 4 corners → type real size in cm (or pass `--width` / `--height` in cm to skip the questions) → click and tag every hold → save. `--markers` finds the corners from printed markers instead. `--auto` finds the holds automatically and shows them for checking (click a ring = remove, click elsewhere = add, u = undo); without it, every hold is clicked by hand as before. |
 | `generate` | Rules-based route; `--train`, `--moves`, `--height`, `--level`, `--seed`, `--preview`, `--by NAME` (who set it, optional). |
 | `build` | Click holds in order on the photo; warns about moves past reach. `--by NAME` optional. |
 | `live` | Route on the live camera. Keys: g new route, n next, f full screen, s screenshot, v record, q quit. `--video` replays a file instead of the webcam. |
@@ -49,6 +49,7 @@ walls/<wall>/
 - `corners_px` are ordered top-left, top-right, bottom-right, bottom-left, in photo pixels.
 - Hold `cm` coordinates: x to the right, **y upwards**, origin at the bottom-left corner.
 - `type` is one of jug, crimp, sloper, pinch, pocket, or null.
+- `colour` (from `scan --auto`, optional): red, orange, yellow, green, blue, purple, pink, black, white or grey.
 - `markers_px` exists only in markers mode.
 
 **route json**
@@ -111,6 +112,17 @@ Routes may also have `"by": "max"` (who set them, from `--by`); older routes wit
 - Each entry keeps a copy of the route's grade, skills and hold types, so the history still means something after the wall is re-scanned.
 - Names become file names: lower case, spaces to `_`, umlauts to ae/oe/ue/ss, other characters dropped.
 - **"N people climbed this"** = number of different climbers with a `sent` entry for that route on that wall version.
+
+## Automatic hold detection (`scan --auto`)
+
+Rules, no AI; made for a **plain, single-colour board with coloured holds** (the prop wall).
+
+- Works on a copy of the photo at most 900 px, only **inside the four corners** with a margin of 1.5% of the wall's width (the board's edge and the corners are never holds), and never on the printed markers.
+- **The board's colour around every point** = a large median filter (a sixth of the wall's width) of the photo in Lab colour, with everything outside the wall painted in the board's colour first. A pixel belongs to a hold when it differs from that by more than max(22, median + 4 robust deviations). This copes with uneven light.
+- **Blobs** after a little clean-up count as holds when they are at least 1.2% of the wall's width across (smaller: bolt holes, specks), at most 3% of the wall's area, not long and thin (tape, seams), and not ragged (shadows, chalk).
+- **Colour name** per hold (red, orange, yellow, green, blue, purple, pink, black, white, grey) from its median hue, saturation and brightness, saved as `"colour"` in `wall.json` (an extra field; older scans without it still load).
+- **Always checked by a person:** the review window shows every found hold; that is also the fallback - if nothing is found, it is the old click-every-hold window.
+- On the synthetic test walls: 26 of 26 holds, no false ones; under a strong light gradient 25 of 26.
 
 ## Geometry
 
@@ -190,7 +202,7 @@ Settings come from the options, else the climber's profile (`profiles/<name>.jso
 ## Tests
 
 - `python ascent.py selftest` — install check, overlay error on a synthetic warped wall.
-- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), sticker tracking on a synthetic video (sounds, two stickers, no lock, same-colour holds ignored, click to learn the colour, markers wall), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed), profiles (minors, health data, delete one person), safety card once per wall, route filters, challenges (sent or tried finishes it, minors, decline, delete), `serve` + `/live` over real HTTPS with synthetic phone frames (access code, no path escapes, lock, ring accuracy in cm, no rings when lost or far, new/next route, bad requests, certificate reuse), `/scan` (same wall.json and cm as the CLI, versioning and archiving, markers, nine kinds of bad scan refused with nothing saved), `/track` with a scripted hand (sounds, off-route, no lock, Finish into the logbook, safety card once, missing MediaPipe, sessions released), a silent connection not blocking others, the one page with three tabs, phone errors printed on the laptop. 124 checks, plus one that runs the real MediaPipe model when it is installed.
+- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), sticker tracking on a synthetic video (sounds, two stickers, no lock, same-colour holds ignored, click to learn the colour, markers wall), logbook (log, undo, N people climbed this, names), progress and recommendations (no grade points, minors never pushed harder, rehab level fixed), profiles (minors, health data, delete one person), safety card once per wall, route filters, challenges (sent or tried finishes it, minors, decline, delete), `serve` + `/live` over real HTTPS with synthetic phone frames (access code, no path escapes, lock, ring accuracy in cm, no rings when lost or far, new/next route, bad requests, certificate reuse), `/scan` (same wall.json and cm as the CLI, versioning and archiving, markers, nine kinds of bad scan refused with nothing saved), `/track` with a scripted hand (sounds, off-route, no lock, Finish into the logbook, safety card once, missing MediaPipe, sessions released), a silent connection not blocking others, the one page with three tabs, phone errors printed on the laptop. 129 checks, plus one that runs the real MediaPipe model when it is installed.
 
 **Not covered:** a real webcam, real windows on Windows, the real panel under venue light.
 

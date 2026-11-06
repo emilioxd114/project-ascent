@@ -9,6 +9,7 @@ Commands
   python ascent.py scan --wall panel --image p.jpg  same, from a photo file
   python ascent.py scan --wall panel --markers      use the printed markers instead of tapping corners
   python ascent.py scan --wall panel --width 300 --height 220   wall size in cm, so nothing is typed
+  python ascent.py scan --wall prop --markers --auto --camera 1  holds found automatically, then checked
   python ascent.py generate --wall panel --train reach --moves 6 --height 172 --preview
   python ascent.py build --wall panel               tap holds in order to make your own route
   python ascent.py live --wall panel --route r1     route drawn on the live camera
@@ -28,6 +29,7 @@ Commands
 Keys in the windows
   scan corners : click 4 corners (top-left, top-right, bottom-right, bottom-left), u = undo, Enter = done
   scan holds   : click each hold, then j/c/s/p/k to tag it jug/crimp/sloper/pinch/pocket, u = undo, Enter = done
+  scan --auto  : click a ring to remove it, click a missed hold to add it, u = undo, Enter = done
   build        : click holds in climbing order, u = undo, Enter = done
   live         : q = quit, s = screenshot, v = start/stop recording a video
   track        : q = stop, m = sound on/off, click = sticker colour, d = show sticker pixels
@@ -412,6 +414,81 @@ def estimate_grade(wall, ids, height):
     return "~" + GRADES[i]
 
 
+# ---------------------------------------------------------------- automatic hold detection (prop wall)
+
+HOLD_COLOURS = ("red", "orange", "yellow", "green", "blue", "purple", "pink", "black", "white", "grey")
+
+
+def colour_name(bgr_pixels):
+    """A plain colour name for a hold, from its pixels."""
+    hsv = cv2.cvtColor(np.uint8(bgr_pixels).reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    h, s, v = (float(x) for x in np.median(hsv, axis=0))
+    if v < 60:
+        return "black"
+    if s < 45:
+        return "white" if v > 170 else "grey"
+    for name, top in (("red", 8), ("orange", 20), ("yellow", 35), ("green", 85), ("blue", 130),
+                      ("purple", 150), ("pink", 170)):
+        if h < top:
+            return name
+    return "red"
+
+
+def detect_holds(photo, corners, markers_px=None):
+    """Finds holds on a plain board: blobs that differ in colour or brightness from the board around them.
+    Rules, no AI. Works best on a single-colour board with coloured holds; always check the result.
+    Returns [{"px": [x, y], "type": None, "colour": name}] in photo pixels."""
+    h0, w0 = photo.shape[:2]
+    f = min(1.0, 900.0 / max(h0, w0))
+    img = cv2.resize(photo, (int(w0 * f), int(h0 * f)), interpolation=cv2.INTER_AREA) if f < 1 else photo.copy()
+    quad = np.float32(corners) * f
+    c = quad.mean(axis=0)
+    wall_w = float(np.linalg.norm(quad[1] - quad[0]))
+    area_mask = np.zeros(img.shape[:2], np.uint8)
+    cv2.fillPoly(area_mask, [np.int32(quad)], 255)
+    edge = max(3, int(0.015 * wall_w))                          # the board's edge is not a hold
+    area_mask = cv2.erode(area_mask, np.ones((edge, edge), np.uint8))
+    for m in (markers_px or {}).values():                       # printed markers are not holds
+        mq = np.float32(m) * f
+        mc = mq.mean(axis=0)
+        cv2.fillPoly(area_mask, [np.int32(mc + 1.6 * (mq - mc))], 0)
+    wall_area = max(quad_area(quad), 1.0)
+    # the board's own colour around every point (so uneven light doesn't matter)
+    if not area_mask.any():
+        return []
+    lab = cv2.cvtColor(cv2.GaussianBlur(img, (5, 5), 0), cv2.COLOR_BGR2LAB)
+    board = lab.copy()                                          # outside the wall: painted with the board's colour,
+    board[area_mask == 0] = np.median(lab[area_mask > 0], axis=0).astype(np.uint8)   # so edges look like board
+    k = int(wall_w / 6) | 1
+    small = max(1, k // 15)
+    bg = cv2.resize(cv2.medianBlur(cv2.resize(board, None, fx=1 / small, fy=1 / small), min(255, (k // small) | 1)),
+                    (lab.shape[1], lab.shape[0]), interpolation=cv2.INTER_LINEAR)
+    diff = np.linalg.norm(lab.astype(np.float32) - bg.astype(np.float32), axis=2)
+    inside = diff[area_mask > 0]
+    if inside.size == 0:
+        return []
+    thr = max(22.0, float(np.median(inside) + 4 * 1.4826 * np.median(np.abs(inside - np.median(inside)))))
+    fg = ((diff > thr) & (area_mask > 0)).astype(np.uint8) * 255
+    fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(fg)
+    min_d = 0.012 * wall_w                                      # smaller than this: a bolt hole or a speck
+    holds = []
+    for i in range(1, n):
+        x, y, bw, bh, a = stats[i]
+        if a < np.pi * (min_d / 2) ** 2 or a > 0.03 * wall_area:
+            continue
+        if max(bw, bh) > 5 * max(1, min(bw, bh)):              # long thin things: tape, seams, edges
+            continue
+        if a < 0.35 * bw * bh:                                  # very ragged: shadows, chalk smears
+            continue
+        px = cents[i] / f
+        holds.append({"px": [round(float(px[0]), 1), round(float(px[1]), 1)], "type": None,
+                      "colour": colour_name(img[labels == i])})
+    holds.sort(key=lambda hd: (round(hd["px"][1] / max(1.0, 0.05 * wall_w / f)), hd["px"][0]))
+    return holds
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_selftest(args):
@@ -587,6 +664,60 @@ def click_holds(photo, corners):
     return holds
 
 
+def review_holds(photo, corners, holds):
+    """The holds found automatically, on the photo. Click a ring to remove a wrong one, click anywhere else
+    to add a missed one (then j/c/s/p/k tags it). u = undo the last change, Enter = done."""
+    view0, s = fit(photo)
+    holds = [dict(h) for h in holds]
+    undo = []
+    win = "Ascent - check the holds"
+
+    def on_mouse(event, x, y, flags, param):
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        p = np.array([x / s, y / s])
+        near = [i for i, h in enumerate(holds) if np.linalg.norm(np.array(h["px"]) - p) * s < 14]
+        if near:
+            i = min(near, key=lambda j: np.linalg.norm(np.array(holds[j]["px"]) - p))
+            undo.append(("removed", i, holds.pop(i)))
+        else:
+            px = [round(float(p[0]), 1), round(float(p[1]), 1)]
+            xi, yi = int(np.clip(p[0], 2, photo.shape[1] - 3)), int(np.clip(p[1], 2, photo.shape[0] - 3))
+            holds.append({"px": px, "type": None, "colour": colour_name(photo[yi - 2:yi + 3, xi - 2:xi + 3])})
+            undo.append(("added", len(holds) - 1, None))
+
+    cv2.namedWindow(win)
+    cv2.setMouseCallback(win, on_mouse)
+    while True:
+        view = view0.copy()
+        cv2.polylines(view, [np.int32(np.asarray(corners) * s)], True, AMBER, 1, cv2.LINE_AA)
+        for i, h in enumerate(holds):
+            c = (int(h["px"][0] * s), int(h["px"][1] * s))
+            new = bool(undo) and undo[-1][0] == "added" and i == len(holds) - 1
+            cv2.circle(view, c, 13, DARK, 6, cv2.LINE_AA)
+            cv2.circle(view, c, 13, AMBER if new else WHITE, 3, cv2.LINE_AA)
+            if h.get("type"):
+                put_text(view, h["type"], (c[0] + 17, c[1] + 6), 0.5, WHITE, 1)
+        banner(view, [f"{len(holds)} holds found. Click a ring to remove it, click a missed hold to add it.",
+                      "After adding: j jug  c crimp  s sloper  p pinch  k pocket.  u = undo, Enter = done"])
+        cv2.imshow(win, view)
+        k = cv2.waitKey(20) & 0xFF
+        if k == ord("u") and undo:
+            what, i, h = undo.pop()
+            if what == "removed":
+                holds.insert(i, h)
+            else:
+                holds.pop(i)
+        elif chr(k) in HOLD_TYPES and undo and undo[-1][0] == "added":
+            holds[undo[-1][1]]["type"] = HOLD_TYPES[chr(k)]
+        elif k in (13, 10) and holds:
+            break
+        elif k == 27:
+            sys.exit("Cancelled.")
+    cv2.destroyWindow(win)
+    return holds
+
+
 def ask_number(prompt, default=None):
     while True:
         raw = input(prompt).strip()
@@ -648,7 +779,13 @@ def cmd_scan(args):
         h_cm = ask_number(f"Distance between the two left corners, in cm (Enter for about {h_default}): ",
                           default=h_default)
 
-    holds = click_holds(photo, corners)
+    if getattr(args, "auto", False):
+        found = detect_holds(photo, corners, markers_px)
+        print(f"Found {len(found)} holds automatically. Check them: click a ring to remove it, "
+              "click a missed hold to add it, Enter when done.")
+        holds = review_holds(photo, corners, found)
+    else:
+        holds = click_holds(photo, corners)
     save_scan(args.wall, photo, corners, w_cm, h_cm, assumed, holds, markers_px)
     print(f"Next: python ascent.py generate --wall {args.wall} --preview")
 
@@ -2608,6 +2745,8 @@ def main():
     p.add_argument("--image")
     p.add_argument("--markers", action="store_true")
     p.add_argument("--camera", type=int, default=0)
+    p.add_argument("--auto", action="store_true",
+                   help="find the holds automatically (plain board, coloured holds), then check them")
     p.add_argument("--width", type=positive_cm, help="wall width in cm (top-left to top-right corner); skips the question")
     p.add_argument("--height", type=positive_cm, help="wall height in cm (top-left to bottom-left corner); skips the question")
 

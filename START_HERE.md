@@ -87,7 +87,56 @@ This plays a whole session with scripted clicks, keys and a fake camera video: s
 
 To replay a recording instead of the webcam: `python ascent.py live --wall panel --video clip.mp4`.
 
-## Phone as camera (`serve`)
+## Prop wall demo: phone as webcam, puppet with stickers
+
+The phone is a camera for the laptop through a webcam app (**Camo** or **DroidCam**: install it on the phone and on the laptop, connect them). The overlay shows on the laptop or projector. The laptop's own webcam is usually camera 0, the phone camera 1 - if 1 shows the wrong camera, try `--camera 2`.
+
+Before you start: tape the **4 printed markers** flat near the corners of the prop wall, and put a **sticker on each of the puppet's hands** in a colour that **no hold has** (neon green or pink are good).
+
+**1. Scan the wall (once, and again after moving holds)**
+
+```
+python ascent.py scan --wall prop --markers --auto --camera 1 --width 60 --height 45
+```
+
+- `--width` / `--height`: the distance **between the centres of the markers** in cm (top-left to top-right, top-left to bottom-left). Measure once with a tape.
+- A camera window opens: whole wall in frame, all 4 markers visible, **SPACE** takes the photo.
+- The holds are found automatically and shown as rings. **Click a ring** to remove a wrong one, **click a missed hold** to add it, **u** = undo, **Enter** = save.
+- Without `--markers`, click the 4 corners first. Without `--auto`, click every hold by hand (the fallback).
+
+**2. Make a route - by skill (automatic) or by hand**
+
+`--height` is the **puppet's** height in cm: every move stays within 0.55 x that.
+
+```
+python ascent.py generate --wall prop --height 30 --moves 5 --train reach --preview
+python ascent.py generate --wall prop --height 30 --moves 5 --train traverse --preview
+python ascent.py generate --wall prop --height 30 --moves 5 --level easy --preview
+python ascent.py generate --wall prop --height 30 --moves 5 --level hard --preview
+python ascent.py build --wall prop --height 30
+```
+
+`build` = by hand: click the holds in climbing order, Enter saves. Each command prints the route's name (r1, r2, ...). `python ascent.py list` shows them all.
+
+**3. Show it on the wall, with the phone moving**
+
+```
+python ascent.py live --wall prop --route r1 --camera 1
+```
+
+Move the phone anywhere in range - at least 2 markers in view. **f** = full screen for the projector, **n** = next route, **g** = new route (add `--height 30 --train reach` so g makes puppet routes), **q** = quit.
+
+**4. The puppet climbs, with sounds**
+
+```
+python ascent.py track --wall prop --route r1 --camera 1 --sticker green
+```
+
+- **Click on a sticker** in the window once: that teaches the exact colour under your light. **d** shows what counts as sticker (amber) - only the stickers should light up.
+- A sticker that stays on a hold for half a second is a touch: a **high beep** for the next hold in order, a **low buzz** for a hold that is not on the route, a tune at the top. **m** = sound on/off, **q** = stop and see the result.
+- Nothing counts and nothing is drawn while the wall isn't matched.
+
+## Phone as camera through the browser (`serve`, not used in the demo)
 
 The laptop does the work; the phone is the camera and the screen. Install once (it only makes the certificate): `pip install cryptography`.
 
