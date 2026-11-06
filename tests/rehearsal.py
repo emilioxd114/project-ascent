@@ -368,6 +368,52 @@ def rehearse_routes():
     check("routes: a wrong grade is refused", bad)
 
 
+def rehearse_challenges():
+    """Challenges: invite, done on a send or a real try, no deadline, minors protected, both win."""
+    base = dict(climber=None, to=None, wall=None, route=None, message=None, decline=None)
+    ch = lambda **kw: quiet(ascent.cmd_challenge, SimpleNamespace(**{**base, **kw}))
+    log = lambda c, r, res: quiet(ascent.cmd_log, SimpleNamespace(climber=c, wall="tw", route=r, result=res,
+                                                                  date=None, note=None, undo=False))
+
+    def refused(**kw):
+        try:
+            ch(**kw)
+            return False
+        except SystemExit:
+            return True
+
+    out = ch(climber="nora", to="Lena", wall="tw", route="j1", message="your turn")
+    check("challenge: created", os.path.exists("challenges/c1.json") and "No deadline" in out)
+    check("challenge: not to yourself", refused(climber="nora", to="nora", wall="tw", route="j1"))
+    quiet(ascent.cmd_profile, SimpleNamespace(climber="kid", goal="play", level=None, height=90.0, language=None,
+                                              visibility=None, minor=True, adult=False, parental_consent=False,
+                                              therapist=None, rehab_level=None, sessions_per_week=None,
+                                              delete=False, yes=False))
+    check("challenge: a minor can't get a route past their reach", refused(climber="nora", to="kid", wall="tw",
+                                                                            route="t1"))
+    log("lena", "j1", "fail")
+    check("challenge: a fail doesn't finish it", not ascent.finished_challenges("lena"))
+    before = ascent.play_points("lena", ascent.load_log("lena")["entries"])[0]
+    out = log("lena", "j1", "tried")
+    check("challenge: a real try finishes it, both win", "Challenge c1 done" in out
+          and ascent.finished_challenges("nora") and "Team player: finished a challenge"
+          in ascent.badges("nora", ascent.load_log("nora")["entries"]))
+    check("challenge: worth points for play",
+          ascent.play_points("lena", ascent.load_log("lena")["entries"])[0] > before)
+    ch(climber="nora", to="lena", wall="tw", route="r1")
+    out = ch(climber="lena", decline="c2")
+    check("challenge: declining costs nothing", "No penalty" in out
+          and json.load(open("challenges/c2.json")).get("declined"))
+    check("challenge: only the person challenged can decline", refused(climber="nora", decline="c2"))
+    out = ch(climber="lena")
+    check("challenge: list shows done and declined", "done" in out and "declined" in out, out)
+    quiet(ascent.cmd_profile, SimpleNamespace(climber="nora", goal=None, level=None, height=None, language=None,
+                                              visibility=None, minor=False, adult=False, parental_consent=False,
+                                              therapist=None, rehab_level=None, sessions_per_week=None,
+                                              delete=True, yes=True))
+    check("challenge: deleting a person deletes their challenges", ascent.all_challenges() == [])
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -546,6 +592,7 @@ def main():
         rehearse_progress()
         rehearse_profile()
         rehearse_routes()
+        rehearse_challenges()
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

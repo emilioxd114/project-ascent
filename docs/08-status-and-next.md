@@ -14,7 +14,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Progress and recommendations** (`progress`, `recommend`, 6 Nov): skills for Lena, levels without grade points for Max, sessions against the therapist's goal for Laura; milestones; rule-based "you rarely climb pinches" recommendations that can generate the routes. `generate` and `build` take an optional `--by`.
 - **Profile** (`profile`, 6 Nov): goal, language, level, height, age group, visibility with stricter rules for minors and health data, therapist-set rehab settings, delete one person from everything. Local files only; accounts still need a server.
 - **Safety card and route filters** (`safety`, `routes`, 6 Nov): a 7-line card in English or German, shown once per climber and wall; the boulder list filtered by skill, grade, holds, made by, setter, not yet sent, within reach, with "N climbed".
-- **Tests:** selftest and the rehearsal (67 checks, 68 with MediaPipe), all passing.
+- **Challenges** (`challenge`, 6 Nov): invite someone on the same laptop to a route; done when they send it or give it a real try; both get a milestone and points; no deadline; minors can't be sent routes past their reach. Sending between phones needs the server.
+- **Tests:** selftest and the rehearsal (77 checks, 78 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested
@@ -45,6 +46,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 
 - Done (6 Nov): logbook format and `log` command (06-architecture.md). Still open: calibrating grades from it.
 - Done (6 Nov): rule-based recommendations reusing the generator (`recommend`), progress per persona (`progress`): levels (Max), rehab goals (Laura), skills (Lena). Rules in 06-architecture.md. Still open: a coach-plan format, and the dashboard screen on the canvas.
+
+- Done locally (6 Nov): challenges (`challenge`) — "how do you challenge someone and what do you win": you invite, they try, you both win. Still open: the "send a challenge" screen, and real rewards (sponsors) that don't favour difficulty.
 
 ### Group 3 (community and app basics)
 

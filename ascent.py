@@ -19,6 +19,7 @@ Commands
   python ascent.py log --climber lena               show Lena's logbook
   python ascent.py routes --wall panel --train sloper --grade 5a-6a --climber lena --new   filtered list
   python ascent.py safety                           the safety card (--language de)
+  python ascent.py challenge --climber max --to lena --wall panel --route r3    invite; --climber lena lists
   python ascent.py profile --climber lena --goal train --level medium --height 165   sign-up details
   python ascent.py progress --climber lena          stats, skills / level / rehab sessions, milestones
   python ascent.py recommend --climber lena --wall panel --make 3    what to train next, by rules
@@ -1010,6 +1011,7 @@ def cmd_log(args):
         print(f"Logged for {cid}: {e['wall']} {e['route']} {e['estimated_grade']} (estimated) - {e['result']}")
         n = len(climbed_by(wall["name"], wall["version"], route["name"]))
         print(f"{n} {'person has' if n == 1 else 'people have'} sent this route on this wall.")
+        announce_challenges()
         return
     log = load_log(cid)
     if not log["entries"]:
@@ -1104,7 +1106,7 @@ def badges(climber, entries):
         out.append("Regular: climbed in 4 different weeks (rest weeks are fine)")
     if any(others for _, _, others in routes_set_by(climber)):
         out.append("Route setter: someone else sent your route")
-    if any(e.get("challenge") for e in entries):
+    if finished_challenges(climber):
         out.append("Team player: finished a challenge")
     return out
 
@@ -1116,7 +1118,7 @@ def play_points(climber, entries):
     routes = {(e["wall"], e["wall_version"], e["route"]) for e in entries}
     types = set().union(*[set(e.get("hold_types") or []) for e in entries]) if entries else set()
     repeats = sum(len(others) for _, _, others in routes_set_by(climber))
-    pts = len(days) + 2 * len(routes) + len(types) + 3 * repeats + 2 * sum(1 for e in entries if e.get("challenge"))
+    pts = len(days) + 2 * len(routes) + len(types) + 3 * repeats + 2 * len(finished_challenges(climber))
     return pts, 1 + pts // 10, 10 - pts % 10
 
 
@@ -1284,6 +1286,7 @@ def show_profile(p):
 def personal_files(cid):
     """Everything stored about one person, for showing or deleting it."""
     files = [f for f in (profile_path(cid), log_path(cid)) if os.path.exists(f)]
+    files += [challenge_path(c["id"]) for c in all_challenges() if cid in (c["from"], c["to"])]
     routes = []
     if os.path.isdir(DATA_DIR):
         for root, _, names in os.walk(DATA_DIR):
@@ -1337,11 +1340,12 @@ def cmd_profile(args):
                  "--goal train --level medium --height 165")
     if p is not None and not any(v is not None for v in fields.values()) and not (
             rehab_given or args.minor or args.adult or args.parental_consent):
-        show_profile(p)
+        show_profile({"goal": "train", "level": "medium", "height_cm": 172.0, "language": "en",
+                      "visibility": "private", **p})
         return
     new = p is None
-    p = p or {"name": cid, "goal": "train", "level": "medium", "height_cm": 172.0, "language": "en",
-              "minor": False, "visibility": "private", "created": time.strftime("%Y-%m-%d %H:%M")}
+    p = {"name": cid, "goal": "train", "level": "medium", "height_cm": 172.0, "language": "en",
+         "minor": False, "visibility": "private", "created": time.strftime("%Y-%m-%d %H:%M"), **(p or {})}
     for k, v in fields.items():
         if v is not None:
             p[k] = v
@@ -1507,6 +1511,120 @@ def cmd_routes(args):
     elif total:
         print("No route matches. Try fewer filters, or make one: python ascent.py generate --wall "
               f"{wall['name']}" + (f" --train {args.train}" if args.train else ""))
+
+
+# ---------------------------------------------------------------- challenges
+
+CHALLENGE_DIR = "challenges"
+
+
+def all_challenges():
+    if not os.path.isdir(CHALLENGE_DIR):
+        return []
+    out = []
+    for f in sorted(os.listdir(CHALLENGE_DIR)):
+        if f.endswith(".json"):
+            with open(os.path.join(CHALLENGE_DIR, f), encoding="utf-8") as fh:
+                out.append(json.load(fh))
+    return sorted(out, key=lambda c: int(c["id"][1:]))
+
+
+def challenge_path(cid):
+    return os.path.join(CHALLENGE_DIR, f"{cid}.json")
+
+
+def refresh_challenges():
+    """A challenge is done when the person challenged has logged the route - sent OR tried, because
+    showing up and trying is the point. Returns the challenges that became done just now."""
+    news = []
+    for c in all_challenges():
+        if c.get("done") or c.get("declined"):
+            continue
+        for e in load_log(c["to"])["entries"]:
+            if (e["wall"], e["wall_version"], e["route"]) == (c["wall"], c["wall_version"], c["route"]) \
+                    and e["result"] in ("sent", "tried") and e["date"] >= c["created"]:
+                c["done"] = {"date": e["date"], "result": e["result"]}
+                save_json(challenge_path(c["id"]), c)
+                news.append(c)
+                break
+    return news
+
+
+def finished_challenges(climber):
+    cid = climber_id(climber)
+    return [c for c in all_challenges() if c.get("done") and cid in (c["from"], c["to"])]
+
+
+def announce_challenges():
+    for c in refresh_challenges():
+        print(f"Challenge {c['id']} done: {c['to']} {c['done']['result']} {c['route']} for {c['from']}. "
+              "You both get the 'Team player' milestone.")
+
+
+def cmd_challenge(args):
+    if args.decline:
+        p = challenge_path(args.decline)
+        if not os.path.exists(p):
+            sys.exit(f"No challenge {args.decline}.")
+        with open(p, encoding="utf-8") as f:
+            c = json.load(f)
+        if climber_id(args.climber) != c["to"]:
+            sys.exit(f"Only {c['to']} can decline {c['id']}.")
+        c["declined"] = time.strftime("%Y-%m-%d %H:%M")
+        save_json(p, c)
+        print(f"Declined {c['id']}. No penalty - challenges are invitations, not duties.")
+        return
+    if args.to:
+        sender, to = climber_id(args.climber), climber_id(args.to)
+        if sender == to:
+            sys.exit("Challenge someone else - for yourself, use recommend.")
+        if not (args.wall and args.route):
+            sys.exit("A challenge needs --wall and --route.")
+        wall, _ = load_wall(args.wall)
+        route = load_route(args.wall, args.route)
+        prof = load_profile(to) or {}
+        if prof.get("height_cm"):
+            past = [w for w in route_warnings(wall, route["holds"], prof["height_cm"]) if "past your reach" in w]
+            if past and prof.get("minor"):
+                sys.exit(f"{to} is under 18 and this route has a move past their reach ({past[0]}). "
+                         "Pick a route that fits them.")
+            for w in past:
+                print(f"Note for {to}: {w}")
+        ids = [int(c["id"][1:]) for c in all_challenges()]
+        c = {"id": f"c{max(ids, default=0) + 1}", "from": sender, "to": to, "wall": wall["name"],
+             "wall_version": wall["version"], "route": route["name"],
+             "estimated_grade": route.get("estimated_grade"), "created": time.strftime("%Y-%m-%d %H:%M"),
+             "done": None}
+        if args.message:
+            c["message"] = args.message
+        save_json(challenge_path(c["id"]), c)
+        print(f"Challenge {c['id']}: {sender} invites {to} to climb {wall['name']} {route['name']} "
+              f"({c['estimated_grade']}, estimated).")
+        print("Done when they send it or give it a real try. No deadline. You both win the milestone.")
+        if prof.get("minor"):
+            print(f"{to} is under 18: climb it together, or with an adult nearby.")
+        print("(On this laptop only - sending to someone else's phone needs the shared server.)")
+        return
+    me = climber_id(args.climber)
+    announce_challenges()
+    mine = [c for c in all_challenges() if me in (c["from"], c["to"])]
+    if not mine:
+        print(f"No challenges for {me}. Invite someone: python ascent.py challenge --climber {me} --to NAME "
+              "--wall panel --route r1")
+        return
+    for c in mine:
+        state = (f"done {c['done']['date'][:10]} ({c['done']['result']})" if c.get("done")
+                 else "declined" if c.get("declined") else "open")
+        who = f"from {c['from']}" if c["to"] == me else f"to {c['to']}"
+        msg = f'  "{c["message"]}"' if c.get("message") else ""
+        print(f"  {c['id']:<4} {who:<12} {c['wall']} {c['route']:<6} {c.get('estimated_grade') or '?':<4} "
+              f"{state}{msg}")
+    open_for_me = [c for c in mine if c["to"] == me and not c.get("done") and not c.get("declined")]
+    if open_for_me:
+        c = open_for_me[0]
+        print(f"Climb it: python ascent.py track --climber {me} --wall {c['wall']} --route {c['route']}")
+        print(f"   or log it: python ascent.py log --climber {me} --wall {c['wall']} --route {c['route']} "
+              "--result tried")
 
 
 # ---------------------------------------------------------------- motion tracking with audio
@@ -1795,6 +1913,7 @@ def run_track(args):
             add_log_entry(args.climber, wall, route, s["result"], "camera", attempt=attempt)
             print(f"Logged for {climber_id(args.climber)} as '{s['result']}'. Wrong? Fix it with:\n"
                   f"  python ascent.py log --climber {climber_id(args.climber)} --undo   and log it again by hand.")
+            announce_challenges()
     return s
 
 
@@ -1907,6 +2026,14 @@ def main():
     p.add_argument("--within-reach", action="store_true", help="hide routes with a move past the climber's reach")
     p.add_argument("--height", type=positive_cm, help="climber height for --within-reach; default: profile")
 
+    p = sub.add_parser("challenge", help="invite someone on this laptop to climb a route; list challenges")
+    p.add_argument("--climber", required=True, help="you")
+    p.add_argument("--to", help="who you invite")
+    p.add_argument("--wall")
+    p.add_argument("--route")
+    p.add_argument("--message")
+    p.add_argument("--decline", metavar="ID", help="decline a challenge sent to you, e.g. c3")
+
     p = sub.add_parser("progress", help="stats, skills, level or rehab sessions, milestones")
     p.add_argument("--climber", required=True)
     p.add_argument("--goal", choices=GOALS, help="train (skills), play (levels), rehab (sessions); default: profile")
@@ -1937,7 +2064,8 @@ def main():
     handler = {"selftest": cmd_selftest, "scan": cmd_scan, "generate": cmd_generate, "build": cmd_build,
                "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track,
                "log": cmd_log, "progress": cmd_progress, "recommend": cmd_recommend,
-               "profile": cmd_profile, "safety": cmd_safety, "routes": cmd_routes}[args.cmd]
+               "profile": cmd_profile, "safety": cmd_safety, "routes": cmd_routes,
+               "challenge": cmd_challenge}[args.cmd]
     sys.exit(handler(args) or 0)
 
 

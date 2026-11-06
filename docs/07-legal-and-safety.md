@@ -37,7 +37,7 @@ The app must be **a tool the therapist uses**, never a system that tells a patie
 
 ## Climbing safety
 
-- **Gamification must not push people to climb harder alone.** For minors especially: no streaks that punish rest days, no leaderboard by hardest grade. Reward consistency, routes created, routes repeated by others, technique.
+- **Gamification must not push people to climb harder alone.** For minors especially: no streaks that punish rest days, no leaderboard by hardest grade. Reward consistency, routes created, routes repeated by others, technique. The prototype's levels, milestones and challenges follow this (06-architecture.md): no grade points, no streaks, challenges finished by trying, no deadlines, minors never sent routes past their reach.
 - **Reach guardrails** stop the generator from proposing moves beyond the climber's reach.
 - **The phone placement** must never be on the landing zone of the crash pad.
 - **Wrong overlays are a safety issue too.** That's why the app draws nothing when unsure.

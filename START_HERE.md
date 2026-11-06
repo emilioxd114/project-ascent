@@ -80,7 +80,7 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations, profiles, safety card and route filters. 67 checks (68 with MediaPipe installed), all passing.
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations, profiles, safety card, route filters and challenges. 77 checks (78 with MediaPipe installed), all passing.
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.
@@ -138,6 +138,15 @@ python ascent.py recommend --climber lena --wall panel --make 3
 ```
 
 `progress` shows climbs, sends and, depending on the goal, skills (train), a level (play) or sessions per week against the therapist's goal (rehab), plus milestones. Choose the view with `--goal`, or set it once in the climber's profile. `recommend` says what to train next and why ("You rarely climb pinches"); `--make 3` generates three such routes. Add `--by lena` to `generate` or `build` to record who set a route.
+
+## Challenges
+
+```
+python ascent.py challenge --climber max --to lena --wall panel --route r3 --message "your turn"
+python ascent.py challenge --climber lena
+```
+
+The challenge is done as soon as Lena logs that route as **sent or tried** (with `log` or `track --climber lena`). Then both get the "Team player" milestone. No deadline; `--decline c1` is always fine. Under-18s can't be sent a route with a move past their reach. Works between profiles on this laptop; sending to someone else's phone needs the server.
 
 ## Re-scanning after a reset
 
