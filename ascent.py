@@ -15,7 +15,7 @@ Commands
   python ascent.py preview --wall panel --route r1  route drawn on the saved photo (demo backup)
   python ascent.py list                             show saved walls and routes
   python ascent.py serve                            phone as camera: open the printed link on the phone
-  python ascent.py track --wall panel --route r1    record my try: hand tracking with sounds (needs mediapipe)
+  python ascent.py track --wall panel --route r1    touches by sticker colour, with sounds (--touch pose: MediaPipe)
   python ascent.py log --climber lena --wall panel --route r1 --result sent    log a climb (sent/tried/fail)
   python ascent.py log --climber lena               show Lena's logbook
   python ascent.py routes --wall panel --train sloper --grade 5a-6a --climber lena --new   filtered list
@@ -30,7 +30,7 @@ Keys in the windows
   scan holds   : click each hold, then j/c/s/p/k to tag it jug/crimp/sloper/pinch/pocket, u = undo, Enter = done
   build        : click holds in climbing order, u = undo, Enter = done
   live         : q = quit, s = screenshot, v = start/stop recording a video
-  track        : q = stop, m = sound on/off
+  track        : q = stop, m = sound on/off, click = sticker colour, d = show sticker pixels
 """
 
 import argparse
@@ -1649,8 +1649,17 @@ POSE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/pose_landmark
                   "pose_landmarker_lite/float16/latest/pose_landmarker_lite.task")
 POSE_MODEL_PATH = os.path.join("models", "pose_landmarker_lite.task")
 HAND_JOINTS = {"left": (15, 17, 19), "right": (16, 18, 20)}   # MediaPipe Pose: wrist, pinky, index
-TOUCH_CM = 12.0      # a hand closer than this to a hold's centre is on that hold
-DWELL_S = 0.4        # ... and must stay that long, so a hand passing by doesn't count
+TOUCH_CM = 12.0      # at most this close to a hold's centre counts as on the hold (smaller on small walls)
+DWELL_S = 0.5        # ... and it must stay that long, so a hand passing by doesn't count
+# Sticker colours in OpenCV's HSV (hue 0-180). Bright, saturated stickers; pick one no hold has.
+STICKER_COLOURS = {
+    "green": [((38, 80, 60), (85, 255, 255))],
+    "pink": [((140, 70, 90), (172, 255, 255))],
+    "orange": [((5, 120, 110), (20, 255, 255))],
+    "yellow": [((21, 90, 110), (36, 255, 255))],
+    "blue": [((95, 110, 60), (125, 255, 255))],
+    "red": [((0, 120, 80), (5, 255, 255)), ((172, 120, 80), (180, 255, 255))],
+}
 SOUND_FILES = {}
 
 
@@ -1707,15 +1716,110 @@ class PoseDetector:
         (self.legacy or self.tasks).close()
 
 
+def auto_touch_cm(wall):
+    """How close counts as 'on the hold': 12 cm on a real wall, less where holds sit close together
+    (a small prop wall), so a touch can't land on two holds. 45% of the usual gap between neighbours."""
+    pos = np.array([h["cm"] for h in wall["holds"]], dtype=float)
+    if len(pos) < 2:
+        return TOUCH_CM
+    d = np.linalg.norm(pos[:, None] - pos[None], axis=2)
+    np.fill_diagonal(d, np.inf)
+    return float(np.clip(0.45 * np.median(d.min(axis=1)), 2.0, TOUCH_CM))
+
+
+class StickerDetector:
+    """Touch tracking without AI: finds up to 2 bright stickers of one colour (on the puppet's hands, a
+    fingertip, a glove) inside the wall. Anything of that colour already in the scan photo (a hold of the
+    same colour) is ignored. Same interface as PoseDetector: hands(...) -> {"1": (x, y), "2": (x, y)}."""
+
+    def __init__(self, colour="green", max_stickers=2):
+        self.max = max_stickers
+        self.prev = {}
+        self.ref_mask, self.corners = None, None
+        self.set_colour(colour)
+
+    def set_colour(self, colour):
+        self.name, self.ranges = colour, STICKER_COLOURS[colour]
+
+    def sample(self, frame, x, y):
+        """Learn the sticker's colour from a click on it."""
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        h, w = hsv.shape[:2]
+        patch = hsv[max(0, y - 3):min(h, y + 4), max(0, x - 3):min(w, x + 4)].reshape(-1, 3)
+        hh, ss, vv = (int(v) for v in np.median(patch, axis=0))
+        if ss < 60:
+            return False                       # grey, white or black: not a usable sticker colour
+        lo, hi = (max(60, ss - 80), max(50, vv - 90)), (255, 255)
+        if hh - 10 < 0 or hh + 10 > 180:
+            self.ranges = [((0, lo[0], lo[1]), ((hh + 10) % 180, 255, 255)),
+                           (((hh - 10) % 180, lo[0], lo[1]), (180, 255, 255))]
+        else:
+            self.ranges = [((hh - 10, lo[0], lo[1]), (hh + 10, 255, 255))]
+        self.name = f"clicked (hue {hh})"
+        self.prepare_ref()
+        return True
+
+    def mask(self, img):
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        m = np.zeros(img.shape[:2], np.uint8)
+        for lo, hi in self.ranges:
+            m |= cv2.inRange(hsv, np.array(lo, np.uint8), np.array(hi, np.uint8))
+        return m
+
+    def prepare(self, wall, ref):
+        self.ref, self.corners = ref, np.array(wall["corners_px"], dtype=np.float32)
+        self.prepare_ref()
+
+    def prepare_ref(self):
+        if getattr(self, "ref", None) is not None:
+            m = self.mask(self.ref)
+            self.ref_mask = cv2.dilate(m, np.ones((9, 9), np.uint8)) if m.any() else None
+
+    def hands(self, frame, t, H=None):
+        m = self.mask(frame)
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        fh, fw = m.shape
+        wall_area = fh * fw
+        if H is not None and self.corners is not None:
+            quad = transform(H, self.corners)
+            c = quad.mean(axis=0)
+            inside = np.zeros_like(m)
+            cv2.fillPoly(inside, [np.int32(c + 1.15 * (quad - c))], 255)   # the wall, a little larger
+            m &= inside
+            wall_area = max(quad_area(quad), 1.0)
+            if self.ref_mask is not None:                                   # same-colour holds don't count
+                m &= ~cv2.warpPerspective(self.ref_mask, H, (fw, fh), flags=cv2.INTER_NEAREST)
+        n, _, stats, cents = cv2.connectedComponentsWithStats(m)
+        blobs = [(stats[i, cv2.CC_STAT_AREA], tuple(cents[i])) for i in range(1, n)
+                 if 10 <= stats[i, cv2.CC_STAT_AREA] <= 0.03 * wall_area]
+        blobs = [p for _, p in sorted(blobs, reverse=True)[:self.max]]
+        # keep each sticker's name from frame to frame: it is the one nearest to where it was
+        out, free = {}, ["1", "2"][:self.max]
+        for p in blobs:
+            near = lambda k: np.hypot(p[0] - self.prev[k][0], p[1] - self.prev[k][1]) if k in self.prev else 1e9
+            name = min(free, key=near)
+            out[name] = p
+            free.remove(name)
+        self.prev = out or self.prev
+        return out
+
+    def close(self):
+        pass
+
+
+def make_sticker_detector(colour="green"):
+    return StickerDetector(colour)
+
+
 class AttemptWatcher:
     """Decides, from hand positions in wall centimetres, which holds were touched and whether in order.
     Rules only: a hand is on a hold when it stays within TOUCH_CM of the hold's centre for DWELL_S.
     Feet are free, so only hands count. Never judges whether a movement is safe."""
 
-    def __init__(self, wall, route_ids, touch_cm=TOUCH_CM, dwell=DWELL_S):
+    def __init__(self, wall, route_ids, touch_cm=None, dwell=DWELL_S):
         self.pos = hold_cm(wall)
         self.route = list(route_ids)
-        self.touch_cm, self.dwell = touch_cm, dwell
+        self.touch_cm, self.dwell = touch_cm or auto_touch_cm(wall), dwell
         self.next = 0                  # index in the route of the next hold to reach
         self.skipped, self.off_route, self.touches = [], [], []
         self.cand, self.on, self.last_off = {}, {}, {}
@@ -1727,8 +1831,8 @@ class AttemptWatcher:
 
     def update(self, hands_cm, t):
         """hands_cm: {"left": (x, y), "right": (x, y)} in cm. Returns a list of (sound, message)."""
-        events = []
-        for side in ("left", "right"):
+        events, arrived = [], []
+        for side in sorted(set(hands_cm) | set(self.cand) | {k for k, v in self.on.items() if v}):
             hid = self.nearest(np.array(hands_cm[side], dtype=float)) if side in hands_cm else None
             if hid is None:
                 self.cand.pop(side, None)
@@ -1738,9 +1842,13 @@ class AttemptWatcher:
                 self.cand[side] = (hid, t)
             if t - self.cand[side][1] >= self.dwell and self.on.get(side) != hid:
                 self.on[side] = hid
-                ev = self._arrive(hid, t, side)
-                if ev:
-                    events.append(ev)
+                arrived.append((hid, side))
+        # two hands landing in the same moment count in climbing order
+        order = {h: i for i, h in enumerate(self.route)}
+        for hid, side in sorted(arrived, key=lambda a: order.get(a[0], len(order))):
+            ev = self._arrive(hid, t, side)
+            if ev:
+                events.append(ev)
         return events
 
     def _arrive(self, hid, t, side):
@@ -1848,11 +1956,18 @@ def run_track(args):
     R = rectify_matrix(wall["corners_px"], wall["size_cm"]["w"], wall["size_cm"]["h"])
     if getattr(args, "climber", None):
         safety_once(climber_id(args.climber), wall["name"])
-    print("Record my try: put the camera 3-4 m back, whole wall in frame, never on the landing zone.")
-    print("Body tracking uses an AI model (MediaPipe Pose) on this laptop. No video is saved and nothing")
-    print("leaves the device. It only checks which holds your hands touch - it does not judge whether a")
-    print("movement is safe. Only film people who agreed to it.")
-    detector = make_pose_detector(args.pose_model)
+    mode = getattr(args, "touch", "pose")
+    print("Record my try: the whole wall in frame (at least 2 markers in markers mode), never on the landing zone.")
+    if mode == "sticker":
+        detector = make_sticker_detector(getattr(args, "sticker", "green"))
+        detector.prepare(wall, ref)
+        print(f"Touch tracking by sticker colour ({detector.name}), no AI. Click the sticker in the window to")
+        print("teach it the exact colour. No video is saved. It only checks which holds the stickers touch.")
+    else:
+        print("Body tracking uses an AI model (MediaPipe Pose) on this laptop. No video is saved and nothing")
+        print("leaves the device. It only checks which holds your hands touch - it does not judge whether a")
+        print("movement is safe. Only film people who agreed to it.")
+        detector = make_pose_detector(args.pose_model)
     tracker = Tracker(wall, ref, args.features)
     if args.video:
         cap = cv2.VideoCapture(args.video)
@@ -1861,19 +1976,30 @@ def run_track(args):
         fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
     else:
         cap, fps = open_camera(args.camera), None
-    watcher = AttemptWatcher(wall, route["holds"], args.touch_cm)
+    watcher = AttemptWatcher(wall, route["holds"], args.touch_cm, getattr(args, "dwell", None) or DWELL_S)
+    print(f"A touch = within {watcher.touch_cm:.1f} cm of a hold's centre for {watcher.dwell:g} s.")
     sound = (lambda kind: None) if args.mute else play_sound
     win = "Ascent - record my try"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     ring_ref = 0.022 * ref.shape[1]
     flash, frame_i, started = None, 0, time.time()
-    print("q = stop, m = sound on/off")
+    last = {"frame": None, "show_mask": False}
+
+    def on_mouse(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN and mode == "sticker" and last["frame"] is not None:
+            ok = detector.sample(last["frame"], int(x), int(y))
+            print(f"Sticker colour set: {detector.name}" if ok else "That spot is grey/white/black - click the sticker.")
+
+    cv2.setMouseCallback(win, on_mouse)
+    print("q = stop, m = sound on/off" + (", click = sticker colour, d = show what counts as sticker"
+                                          if mode == "sticker" else ""))
     while True:
         ok, frame = cap.read()
         if not ok:
             break
         t = frame_i / fps if fps else time.time() - started
         frame_i += 1
+        last["frame"] = frame
         H, state = tracker.locate(frame)
         view = frame.copy()
         if H is not None:
@@ -1883,7 +2009,9 @@ def run_track(args):
             draw_route(view, pts, float(np.linalg.norm(edge[1] - edge[0])))
             for i in range(watcher.next):
                 cv2.circle(view, tuple(int(v) for v in pts[i]), 7, GREEN, -1, cv2.LINE_AA)
-            hands = detector.hands(frame, t)
+            hands = detector.hands(frame, t, H) if mode == "sticker" else detector.hands(frame, t)
+            if mode == "sticker" and last["show_mask"]:
+                view[detector.mask(frame) > 0] = AMBER
             if hands:
                 to_cm = R @ np.linalg.inv(H)
                 sides = list(hands)
@@ -1902,12 +2030,15 @@ def run_track(args):
                 state, f"Point the camera at '{wall['name']}'"), (16, 34), 0.75, AMBER)
         if flash and t - flash[2] < 1.5:
             put_text(view, flash[0], (16, 70), 0.8, flash[1])
-        put_text(view, "AI body tracking on this laptop - no video saved.  m sound  q stop",
-                 (16, view.shape[0] - 18), 0.5, GREY, 1)
+        footer = (f"Sticker: {detector.name} - click it to set the colour.  d show  m sound  q stop"
+                  if mode == "sticker" else "AI body tracking on this laptop - no video saved.  m sound  q stop")
+        put_text(view, footer, (16, view.shape[0] - 18), 0.5, GREY, 1)
         cv2.imshow(win, view)
         k = cv2.waitKey(1) & 0xFF
         if k == ord("q") or k == 27:
             break
+        if k == ord("d"):
+            last["show_mask"] = not last["show_mask"]
         if k == ord("m"):
             sound = play_sound if sound is not play_sound else (lambda kind: None)
             print("Sound " + ("on" if sound is play_sound else "off"))
@@ -2510,7 +2641,12 @@ def main():
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--video", help="use a video file instead of the webcam")
     p.add_argument("--features", choices=["sift", "orb"], default="sift")
-    p.add_argument("--touch-cm", type=positive_cm, default=TOUCH_CM, help="how close a hand must be to a hold")
+    p.add_argument("--touch", choices=["sticker", "pose"], default="sticker",
+                   help="sticker: coloured stickers on the hands, no AI (default); pose: MediaPipe body tracking")
+    p.add_argument("--sticker", choices=list(STICKER_COLOURS), default="green",
+                   help="sticker colour to start with; click the sticker in the window to fine-tune")
+    p.add_argument("--touch-cm", type=positive_cm, help="how close to a hold counts; default: from the hold spacing")
+    p.add_argument("--dwell", type=positive_cm, default=DWELL_S, help="seconds on a hold to count as a touch")
     p.add_argument("--pose-model", help="MediaPipe pose model file (downloaded once if missing)")
     p.add_argument("--mute", action="store_true", help="no sounds, messages only")
     p.add_argument("--climber", help="save the attempt in this climber's logbook")

@@ -19,7 +19,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **One phone page, three tabs** (6 Nov, after the first try on a phone): `serve` prints one link. The scan photo is now taken inside the page (the first version opened the phone's camera app and then got stuck after the photo on a real phone; not reproducible in Chromium, so the camera-app step was removed). Errors on the phone are printed in the laptop terminal.
 - **Phone scan** (`/scan`, 6 Nov): photo, 4 corners or markers, size, holds and types on the phone, saved through the same `save_scan` as the CLI. Tested headlessly and in headless Chromium; not yet on a real phone.
 - **Phone track** (`/track`, 6 Nov): record my try from the phone; MediaPipe on the laptop, sounds on the phone with Web Audio, the result into the logbook. Tested headlessly with a scripted hand and in headless Chromium with the real model (no person in the test video); **not yet with a real climber.**
-- **Tests:** selftest and the rehearsal (115 checks, 116 with MediaPipe), all passing.
+- **Sticker touch tracking** (`track`, 6 Nov): the demo uses a puppet with a coloured sticker on each hand and the phone as a webcam (Camo/DroidCam, `--camera 1`), the overlay on the laptop/projector. No AI. MediaPipe remains as `--touch pose`. The phone web pages are kept but not used in the demo (on the iPhone the scan lost its photo).
+- **Tests:** selftest and the rehearsal (123 checks, 124 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested

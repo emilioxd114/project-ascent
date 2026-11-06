@@ -709,6 +709,92 @@ def rehearse_serve_track(photo):
         httpd.server_close()
 
 
+def rehearse_sticker(photo, mphoto):
+    """track with coloured stickers instead of MediaPipe: touches, sounds, two stickers, same-colour holds,
+    markers mode, colour by click, nothing without a lock."""
+    def video(img, wall_name, frames_script, path, sticker_bgr=(60, 230, 60)):
+        wall = json.load(open(f"walls/{wall_name}/wall.json"))
+        px = {h["id"]: h["px"] for h in wall["holds"]}
+        Hs = camera_path(10 * len(frames_script) + 4)
+        w = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"MJPG"), 15, (1280, 720))
+        for i, H in enumerate(Hs):
+            f = cv2.warpPerspective(img, H, (1280, 720), borderValue=(30, 30, 30))
+            k = i // 10
+            for hold in (frames_script[k] if k < len(frames_script) else ()):
+                x, y = ascent.transform(H, [px[hold]])[0]
+                cv2.circle(f, (int(x) + 3, int(y) - 4), 6, sticker_bgr, -1, cv2.LINE_AA)   # the sticker
+            w.write(f)
+        w.release()
+
+    def run(wall_name, route_name, path, **kw):
+        sounds = []
+        real = ascent.play_sound
+        ascent.play_sound = sounds.append
+        try:
+            args = dict(wall=wall_name, route=route_name, camera=0, video=path, features="sift", touch_cm=None,
+                        pose_model=None, mute=False, climber=None, touch="sticker", sticker="green", dwell=0.5)
+            args.update(kw)
+            with contextlib.redirect_stdout(io.StringIO()):
+                s = ascent.run_track(SimpleNamespace(**args))
+        finally:
+            ascent.play_sound = real
+        return s, sounds
+
+    wall = json.load(open("walls/tw/wall.json"))
+    route = ascent.load_route("tw", "t1")["holds"]
+    px = {h["id"]: h["px"] for h in wall["holds"]}
+    off = [i for i in px if i not in route and all(np.linalg.norm(np.subtract(px[i], px[j])) > 60 for j in route)][0]
+    check("sticker: touch distance comes from the hold spacing", 2 <= ascent.auto_touch_cm(wall) <= 12,
+          f"{ascent.auto_touch_cm(wall):.1f} cm")
+    gui = FakeGUI()
+    gui.install()
+    gui.strict = False
+
+    video(photo, "tw", [(), (route[0],), (route[1],), (off,), (route[2],), (route[3],), (route[4],)], "st1.avi")
+    s, sounds = run("tw", "t1", "st1.avi")
+    check("sticker: positive sound for each hold in order, negative for an off-route hold",
+          sounds == ["good", "good", "off", "good", "good", "top"] and s["off_route"] == [off], str(sounds))
+    # two stickers: one stays on the start hold, the other climbs
+    video(photo, "tw", [(route[0], route[1])] + [(route[0], h) for h in route[1:]], "st2.avi")
+    s, sounds = run("tw", "t1", "st2.avi")
+    check("sticker: two stickers at once (one stays on the start)", s["result"] == "sent"
+          and sounds == ["good"] * 4 + ["top"], f"{s['result']} {sounds}")
+    # nothing without a lock
+    real_locate = ascent.Tracker.locate
+    ascent.Tracker.locate = lambda self, frame: (None, "lost")
+    try:
+        s, sounds = run("tw", "t1", "st1.avi")
+    finally:
+        ascent.Tracker.locate = real_locate
+    check("sticker: no lock, no touches, no sounds", s["reached"] == 0 and sounds == [])
+    # a sticker of a colour that some holds have: those holds are ignored, the sticker still counts
+    video(photo, "tw", [()] * 3, "st3.avi")
+    s, sounds = run("tw", "t1", "st3.avi", sticker="orange")
+    check("sticker: holds of the sticker's colour are not stickers", sounds == [] and s["reached"] == 0, str(sounds))
+    # in make_wall_photo every 5th hold (i % 5 == 4) is orange; ids follow the click order (id = i + 1)
+    plain = [h for h in sorted(px, key=lambda i: -px[i][1]) if (h - 1) % 5 != 4]
+    ascent.save_route(wall, [plain[0], plain[6], plain[12]], "o1", "built", 172)
+    o1 = ascent.load_route("tw", "o1")["holds"]
+    video(photo, "tw", [(h,) for h in o1], "st4.avi", sticker_bgr=(30, 140, 250))
+    s, sounds = run("tw", "o1", "st4.avi", sticker="orange")
+    check("sticker: ... but an orange sticker on other holds counts", sounds == ["good", "good", "top"], str(sounds))
+
+    det = ascent.StickerDetector("pink")
+    frame = np.full((100, 100, 3), 90, np.uint8)
+    cv2.circle(frame, (50, 50), 8, (60, 230, 60), -1)
+    check("sticker: clicking the sticker teaches its colour", det.sample(frame, 50, 50)
+          and det.hands(frame, 0) and not det.sample(frame, 5, 5))
+
+    # markers wall + sticker
+    mwall = json.load(open("walls/mpanel/wall.json"))
+    ascent.save_route(mwall, [h["id"] for h in sorted(mwall["holds"], key=lambda h: -h["px"][1])[:4]], "m1",
+                      "built", 172)
+    mroute = ascent.load_route("mpanel", "m1")["holds"]
+    video(mphoto, "mpanel", [(h,) for h in mroute], "st5.avi")
+    s, sounds = run("mpanel", "m1", "st5.avi")
+    check("sticker: works on a markers wall", s["result"] == "sent" and sounds[-1] == "top", f"{s['result']} {sounds}")
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -891,6 +977,7 @@ def main():
         rehearse_serve_live(photo)
         rehearse_serve_scan(photo, holds, corners, mphoto)
         rehearse_serve_track(photo)
+        rehearse_sticker(photo, mphoto)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

@@ -87,7 +87,7 @@ Notes from the project: of these, ArtRock's brief only asks for accounts and a s
 
 ### Not assigned to any group
 
-**Motion tracking with audio feedback** — the concept paper's "premier discipline" — was not owned by any group during the event. The entry point exists ("Record my try" on the overlay screen) and the test rig includes a wooden mannequin for exactly this. Given ClimbAI, the recommended scope is minimal: detect which hold a hand is on, and play a sound for right or wrong order. **Built on 6 Nov as exactly that** (`python ascent.py track`, see 06-architecture.md); deep movement analysis stays with a partner.
+**Motion tracking with audio feedback** — the concept paper's "premier discipline" — was not owned by any group during the event. The entry point exists ("Record my try" on the overlay screen) and the test rig includes a wooden mannequin for exactly this. Given ClimbAI, the recommended scope is minimal: detect which hold a hand is on, and play a sound for right or wrong order. **Built on 6 Nov as exactly that** (`python ascent.py track`, see 06-architecture.md); deep movement analysis stays with a partner. For the demo the "climber" is a small puppet with a coloured sticker on each hand, moved over the prop wall: MediaPipe is trained on people and would track the operator's hand, while a sticker colour is simple and reliable.
 
 ## The 22 ideas from the brainstorm
 
