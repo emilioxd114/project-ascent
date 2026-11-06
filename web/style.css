@@ -39,3 +39,11 @@ select, input { width: 100%; }
 .bar button { flex: 1; }
 .setup { position: absolute; inset: 0; overflow: auto; background: var(--bg); z-index: 5; }
 .hidden { display: none !important; }
+
+/* Phone held sideways (the usual way to fit a wall): small buttons in the corner, so the wall stays visible */
+@media (orientation: landscape) and (max-height: 500px) {
+  .bar { left: auto; background: none; flex-direction: column; width: 150px; top: auto; }
+  .bar button { min-height: 38px; padding: 6px 8px; font-size: 14px; background: rgba(42,48,56,0.78); }
+  .bar button.primary { background: var(--blue); }
+  .summary { right: 170px; bottom: 12px; }
+}

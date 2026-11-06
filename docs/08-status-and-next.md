@@ -17,7 +17,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Challenges** (`challenge`, 6 Nov): invite someone on the same laptop to a route; done when they send it or give it a real try; both get a milestone and points; no deadline; minors can't be sent routes past their reach. Sending between phones needs the server.
 - **Phone as camera, live** (`serve` + `/live`, 6 Nov): local HTTPS server, the phone streams frames, the laptop tracks and answers with ring positions. Tested headlessly with synthetic frames and in headless Chromium with a fake camera; **not yet on a real phone.**
 - **Phone scan** (`/scan`, 6 Nov): photo, 4 corners or markers, size, holds and types on the phone, saved through the same `save_scan` as the CLI. Tested headlessly and in headless Chromium; not yet on a real phone.
-- **Tests:** selftest and the rehearsal (102 checks, 103 with MediaPipe), all passing.
+- **Phone track** (`/track`, 6 Nov): record my try from the phone; MediaPipe on the laptop, sounds on the phone with Web Audio, the result into the logbook. Tested headlessly with a scripted hand and in headless Chromium with the real model (no person in the test video); **not yet with a real climber.**
+- **Tests:** selftest and the rehearsal (114 checks, 115 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested

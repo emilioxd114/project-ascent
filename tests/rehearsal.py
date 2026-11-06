@@ -536,6 +536,11 @@ def rehearse_serve_live(photo):
         check("serve: bad requests get a message, the server stays up", (st, st2, st3, st4) == (400,) * 4
               and "No wall called" in e2["error"] and "reload" in e3["error"], f"{st} {st2} {st3} {st4}")
         if cert:
+            import socket
+            idle = socket.create_connection(("127.0.0.1", phone.port))       # connects, never says hello
+            st, _, _ = phone.request("GET", "/api/walls")
+            idle.close()
+            check("serve: a silent connection doesn't block other phones", st == 200)
             m = os.path.getmtime(cert)
             ascent.ensure_certificate(["127.0.0.1"])
             same = os.path.getmtime(cert) == m
@@ -603,6 +608,96 @@ def rehearse_serve_scan(photo, holds, corners, mphoto):
         st, page, _ = phone.request("GET", "/scan")
         check("scan page: /scan loads", st == 200 and b"/api/scan" in page)
     finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def rehearse_serve_track(photo):
+    """/track: the phone's frames, a scripted hand, sounds back to the phone, the result into the logbook."""
+    class FakePose:
+        pos = None
+        closed = False
+
+        def hands(self, frame, t):
+            return {"right": FakePose.pos} if FakePose.pos is not None else {}
+
+        def close(self):
+            FakePose.closed = True
+
+    real = ascent.make_pose_detector
+    ascent.make_pose_detector = lambda path=None: FakePose()
+    httpd, phone, _ = start_server()
+    try:
+        wall = json.load(open("walls/tw/wall.json"))
+        px = {h["id"]: h["px"] for h in wall["holds"]}
+        route = ascent.load_route("tw", "t1")["holds"]
+        off = [i for i in px if i not in route and all(np.linalg.norm(np.subtract(px[i], px[j])) > 60 for j in route)][0]
+        quiet(ascent.cmd_profile, SimpleNamespace(climber="tess", goal="train", level=None, height=170.0,
+                                                  language="de", visibility=None, minor=False, adult=False,
+                                                  parental_consent=False, therapist=None, rehab_level=None,
+                                                  sessions_per_week=None, delete=False, yes=False))
+        st, info, _ = phone.post("/api/track/start", {"wall": "tw", "route": "t1", "climber": "Tess"})
+        check("track page: start, with the safety card the first time", st == 200 and info["safety"]
+              and info["safety"][0].startswith("SICHERHEIT"), str(info.get("safety"))[:60])
+        st, info2, _ = phone.post("/api/track/start", {"wall": "tw", "route": "t1", "climber": "tess"})
+        check("track page: ... and not the second time", info2["safety"] is None)
+        sid = info2["sid"]
+        Hs = camera_path(60)
+        events, states, hands_seen, t = [], [], [], 0.0
+
+        def send(i, hold):
+            nonlocal t
+            img, Hf = phone_view(photo, Hs[i])
+            FakePose.pos = tuple(ascent.transform(Hf, [px[hold]])[0] + [2, -1]) if hold else None
+            st, a, _ = phone.frame(sid, img, f"&t={t:.3f}")
+            t += 1 / 8
+            states.append(a.get("state"))
+            events.extend(e["sound"] for e in a.get("events", []))
+            if a.get("hands"):
+                hands_seen.append(a["hands"])
+            return a
+
+        script = [off] * 4 + [h for h in route[:2] for _ in range(5)] + [off] * 5 + \
+                 [h for h in route[2:] for _ in range(5)]
+        for i, hold in enumerate(script):
+            a = send(i, hold)
+        check("track page: sounds for each hold, off-route alert, top", events == ["good", "good", "off", "good",
+                                                                                  "good", "top"], str(events))
+        check("track page: hand positions come back to draw", len(hands_seen) >= len(script) - 2
+              and a["next"] == a["of"] == len(route))
+        st, a, _ = phone.frame(sid, np.full((450, 800, 3), 30, np.uint8), f"&t={t + 1:.3f}")
+        check("track page: no lock - no rings, no hands, no events", "rings" not in a and "hands" not in a
+              and a["events"] == [])
+        st, res, _ = phone.post(f"/api/track/finish?sid={sid}")
+        e = ascent.load_log("tess")["entries"][-1]
+        check("track page: Finish gives the camera's guess and saves it in the logbook",
+              res["result"] == "tried" and res["off_route"] == [off] and res["logged"]
+              and e["by"] == "camera" and e["result"] == "tried" and e["route"] == "t1", str(res))
+        events.clear()
+        for i, hold in enumerate([h for h in route for _ in range(5)]):
+            send(i, hold)
+        st, res, _ = phone.post(f"/api/track/finish?sid={sid}")
+        check("track page: after Finish, a clean try is a send", res["result"] == "sent"
+              and events == ["good"] * (len(route) - 1) + ["top"], f"{res['result']} {events}")
+        st, _, _ = phone.post(f"/api/track/reset?sid={sid}")
+        check("track page: Try again", st == 200)
+
+        st, r1, _ = phone.post("/api/track/start", {"wall": "tw"})
+        ascent.make_pose_detector = lambda path=None: ascent.sys.exit("track needs MediaPipe: pip install mediapipe")
+        st2, r2, _ = phone.post("/api/track/start", {"wall": "tw", "route": "t1"})
+        st3, r3, _ = phone.post("/api/live/start", {"wall": "tw", "route": "t1"})
+        st4, r4, _ = phone.post(f"/api/track/finish?sid={r3['sid']}")
+        check("track page: no route, no MediaPipe, or a live session: a clear message, server stays up",
+              (st, st2, st3, st4) == (400, 400, 200, 400) and "MediaPipe" in r2["error"], f"{st} {st2} {st3} {st4}")
+        st, page, _ = phone.request("GET", "/track")
+        check("track page: /track loads", st == 200 and b"AudioContext" in page)
+        for _ in range(9):
+            ascent.make_pose_detector = lambda path=None: FakePose()
+            phone.post("/api/track/start", {"wall": "tw", "route": "t1"})
+        check("track page: old sessions are closed (MediaPipe released)", FakePose.closed
+              and len(httpd.sessions) <= 8)
+    finally:
+        ascent.make_pose_detector = real
         httpd.shutdown()
         httpd.server_close()
 
@@ -788,6 +883,7 @@ def main():
         rehearse_challenges()
         rehearse_serve_live(photo)
         rehearse_serve_scan(photo, holds, corners, mphoto)
+        rehearse_serve_track(photo)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

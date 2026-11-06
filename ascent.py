@@ -1423,16 +1423,24 @@ def print_safety_card(language="en"):
     print("+" + "-" * (width + 2) + "+")
 
 
-def safety_once(climber, wall_name):
-    """The card is shown the first time a climber opens a wall - a short card, not a page nobody reads.
-    Remembered in the profile; without a profile it is shown every time."""
+def safety_card_due(climber, wall_name):
+    """The card's lines if this climber hasn't seen it on this wall yet (then remembered), else None.
+    Remembered in the profile; without a profile it is due every time."""
     prof = load_profile(climber) if climber else None
     if prof and wall_name in prof.get("safety_seen", []):
-        return False
-    print_safety_card((prof or {}).get("language", "en"))
+        return None
     if prof:
         prof.setdefault("safety_seen", []).append(wall_name)
         save_json(profile_path(climber), prof)
+    return SAFETY_CARD.get((prof or {}).get("language", "en"), SAFETY_CARD["en"])
+
+
+def safety_once(climber, wall_name):
+    """The card is shown the first time a climber opens a wall - a short card, not a page nobody reads."""
+    prof = load_profile(climber) if climber else None
+    if safety_card_due(climber, wall_name) is None:
+        return False
+    print_safety_card((prof or {}).get("language", "en"))
     return True
 
 
@@ -2083,6 +2091,68 @@ class PhoneSession:
             self.use(load_route(self.wall["name"], names[(i + 1) % len(names)]))
 
 
+class TrackSession(PhoneSession):
+    """Record my try from the phone: the same AttemptWatcher and MediaPipe hands as 'track', on the laptop.
+    Hands only count while the wall is locked; the phone plays the sounds."""
+
+    def __init__(self, wall_name, route_name, climber=None, touch_cm=TOUCH_CM):
+        if not route_name:
+            raise ValueError("Choose a route to record.")
+        super().__init__(wall_name, route_name)
+        self.climber = climber_id(climber) if climber else None
+        self.touch_cm = float(touch_cm)
+        self.R = rectify_matrix(self.wall["corners_px"], self.wall["size_cm"]["w"], self.wall["size_cm"]["h"])
+        self.detector = make_pose_detector()
+        self.reset()
+
+    def reset(self):
+        self.watcher = AttemptWatcher(self.wall, self.route["holds"], self.touch_cm)
+        self.t0, self.last_t = time.time(), -1.0
+
+    def use(self, route):
+        super().use(route)
+        if hasattr(self, "watcher"):
+            self.reset()
+
+    def after_frame(self, out, img, H, q):
+        t = self.last_t + 1 / 30
+        try:
+            t = max(float((q.get("t") or [""])[0]), t)        # the phone's capture time, in seconds
+        except ValueError:
+            t = max(time.time() - self.t0, t)
+        self.last_t = t
+        w = self.watcher
+        out.update(next=w.next, of=len(w.route), events=[])
+        if H is None:
+            return                                            # never guess: no lock, nothing counts
+        hands = self.detector.hands(img, t)
+        if hands:
+            sides = list(hands)
+            cms = transform(self.R @ np.linalg.inv(H), [hands[s] for s in sides])
+            out["hands"] = [{"x": round(hands[s][0], 1), "y": round(hands[s][1], 1)} for s in sides]
+            out["events"] = [{"sound": k, "message": m} for k, m in w.update(dict(zip(sides, cms)), t)]
+            out["next"] = w.next
+
+    def finish(self):
+        s = self.watcher.summary()
+        out = {k: s[k] for k in ("result", "reached", "of", "skipped", "off_route", "seconds")}
+        out["logged"] = False
+        if self.climber and s["reached"] > 0:
+            attempt = {k: s[k] for k in ("reached", "of", "skipped", "off_route", "seconds")}
+            add_log_entry(self.climber, self.wall, self.route, s["result"], "camera", attempt=attempt)
+            news = refresh_challenges()
+            out.update(logged=True, climber=self.climber,
+                       challenges=[f"Challenge {c['id']} done for {c['from']} and {c['to']}" for c in news])
+        self.reset()
+        return out
+
+    def close(self):
+        try:
+            self.detector.close()
+        except Exception:
+            pass
+
+
 def decode_photo(data_url):
     """A JPEG from the phone, as a data URL or plain base64. The phone has already turned it upright."""
     import base64
@@ -2174,6 +2244,20 @@ def make_handler(code, sessions):
     types = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
              ".css": "text/css; charset=utf-8"}
 
+    def add_session(s):
+        sid = secrets.token_urlsafe(12)
+        with lock:
+            now = time.time()
+            old = [k for k, v in sessions.items() if now - v.used > SESSION_IDLE_S]
+            if len(sessions) - len(old) >= 8:
+                old.append(min(sessions, key=lambda k: sessions[k].used))
+            for k in set(old):
+                gone = sessions.pop(k)
+                if hasattr(gone, "close"):
+                    gone.close()
+            sessions[sid] = s
+        return sid
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "Ascent"
         sys_version = ""
@@ -2256,15 +2340,24 @@ def make_handler(code, sessions):
                 s = PhoneSession(safe_name(req["wall"]), req.get("route") or None, req.get("train") or "",
                                  int(req.get("moves") or 6), float(req.get("height") or 172),
                                  req.get("level") if req.get("level") in LEVEL_TARGET else "medium")
-                sid = secrets.token_urlsafe(12)
-                with lock:
-                    now = time.time()
-                    for k in [k for k, v in sessions.items() if now - v.used > SESSION_IDLE_S]:
-                        del sessions[k]
-                    if len(sessions) >= 8:
-                        del sessions[min(sessions, key=lambda k: sessions[k].used)]
-                    sessions[sid] = s
-                return {"sid": sid, **s.info()}
+                return {"sid": add_session(s), **s.info()}
+            if path == "/api/track/start":
+                req = json.loads(self.body() or b"{}")
+                s = TrackSession(safe_name(req["wall"]), req.get("route") or None, req.get("climber") or None,
+                                 float(req.get("touch_cm") or TOUCH_CM))
+                sid = add_session(s)
+                card = safety_card_due(s.climber, s.wall["name"]) if s.climber else None
+                return {"sid": sid, **s.info(), "safety": card,
+                        "route_holds": len(s.route["holds"]), "climber": s.climber}
+            if path in ("/api/track/finish", "/api/track/reset"):
+                s = self.session(q)
+                if not isinstance(s, TrackSession):
+                    raise ValueError("Not a tracking session.")
+                with s.lock:
+                    if path.endswith("finish"):
+                        return s.finish()
+                    s.reset()
+                    return {"ok": True}
             if path == "/api/frame":
                 s = self.session(q)
                 img = cv2.imdecode(np.frombuffer(self.body(), np.uint8), cv2.IMREAD_COLOR)
@@ -2298,14 +2391,25 @@ def make_server(host, port, code, certfile=None, keyfile=None):
     """An HTTPS server (plain HTTP only when no certificate is given - used by the rehearsal)."""
     from http.server import ThreadingHTTPServer
     import ssl
+
+    class Server(ThreadingHTTPServer):
+        daemon_threads = True
+
+        def handle_error(self, request, client_address):
+            if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError, ssl.SSLError)):
+                return       # a phone closed the page, or refused the certificate before accepting it
+            super().handle_error(request, client_address)
+
     sessions = {}
-    httpd = ThreadingHTTPServer((host, port), make_handler(code, sessions))
-    httpd.daemon_threads = True
+    handler = make_handler(code, sessions)
+    handler.timeout = 30                         # a phone that stops talking can't hold a thread forever
+    httpd = Server((host, port), handler)
     httpd.sessions = sessions
     if certfile:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(certfile, keyfile)
-        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
+        # The handshake happens in each request's own thread, so one slow phone can't stall the others.
+        httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True, do_handshake_on_connect=False)
     return httpd
 
 

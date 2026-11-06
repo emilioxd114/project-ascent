@@ -98,6 +98,7 @@ python ascent.py serve
 It prints links like `https://192.168.1.23:8443/live?code=k7mz2p`. Type the whole link into the phone's browser (Safari on iPhone, Chrome on Android) - the code is part of it, and without it the page says "Ask for the link with the code". A new code is made every time you start `serve`; `--code` sets your own.
 
 - **/scan** - scan a wall with the phone: name it, **Take photo** (whole wall in frame), tap the 4 corners, type width and height in cm (or leave the width empty to skip), tap every hold and its type, **Save wall**. Same result as `python ascent.py scan`, versions included: scanning an existing wall again makes a new version and archives the old one. Small holds: turn the phone sideways and pinch to zoom.
+- **/track** - record my try from the phone: pick wall and route, optionally your name (then the result goes into your logbook), tap **Start camera and sound**, put the phone 3-4 m back. The phone beeps; **Finish** shows the camera's guess, **Try again** starts over. Needs MediaPipe on the laptop (see "Record my try" below); without it the page says so.
 - **/live** - pick wall and route, tap **Start camera**, point at the wall. Rings appear only while the wall is matched. **New route** = the `g` key, **Next route** = `n`. Hold the phone sideways to fit a whole wall.
 
 ### Connecting phone and laptop
@@ -109,7 +110,7 @@ It prints links like `https://192.168.1.23:8443/live?code=k7mz2p`. Type the whol
    - **Android (Chrome):** "Your connection is not private" > **Advanced** > **Proceed to 192.168.x.x (unsafe)**. Then **Allow** the camera.
 4. **Windows firewall.** The first time `serve` runs, Windows asks whether Python may communicate on networks: tick **Private networks** and click **Allow access**. The network itself must be marked Private: Settings > Network & internet > Wi-Fi > your network > Network profile type > **Private** (do the same for the phone's hotspot). If you clicked Cancel earlier: Control Panel > Windows Defender Firewall > **Allow an app or feature through Windows Defender Firewall** > Change settings > tick **Private** next to Python (python.exe; add it with "Allow another app" if missing) > OK. On a Mac, click **Allow** when asked about incoming connections.
 
-**Still nothing?** Check the address matches what `serve` printed now (IPs change between networks), that nothing else uses port 8443 (`--port 9443`), and try the hotspot. Frames are processed in memory on the laptop and never saved.
+**Still nothing?** Check the address matches what `serve` printed now (IPs change between networks), that nothing else uses port 8443 (`--port 9443`), and try the hotspot. Frames are processed in memory on the laptop and never saved. If the phone is silent on /track: check the ring/silent switch (iPhone) and the media volume.
 
 ## Record my try (motion tracking with sounds)
 
