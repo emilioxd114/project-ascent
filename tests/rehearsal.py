@@ -123,7 +123,7 @@ def rehearse_track(gui, photo, holds, corners):
     off = by_height[2]
     ascent.save_route(wall, route, "t1", "built", 172)
 
-    def run(script):
+    def run(script, climber=None):
         frames = 10 * len(script) + 6
         Hs = camera_path(frames)
         write_video("track.avi", photo, Hs)
@@ -149,7 +149,7 @@ def rehearse_track(gui, photo, holds, corners):
         try:
             summary = ascent.run_track(SimpleNamespace(wall="tw", route="t1", camera=0, video="track.avi",
                                                        features="sift", touch_cm=ascent.TOUCH_CM,
-                                                       pose_model=None, mute=False))
+                                                       pose_model=None, mute=False, climber=climber))
         finally:
             ascent.play_sound = real_play
         return summary, sounds
@@ -164,6 +164,10 @@ def rehearse_track(gui, photo, holds, corners):
           sounds == ["good", "good", "off", "good", "top"] and messy["off_route"] == [off]
           and messy["skipped"] == [route[3]], f"{sounds} off={messy['off_route']} skipped={messy['skipped']}")
     check("track: not clean, so only 'tried'", messy["result"] == "tried", messy["result"])
+    run([route[0], route[1], route[2], route[3], route[4]], climber="Lena")
+    cam = ascent.load_log("lena")["entries"][-1]
+    check("track --climber logs the camera's guess, without raw touches",
+          cam["by"] == "camera" and cam["result"] == "sent" and "touches" not in cam["attempt"], str(cam))
 
     # nothing counts while the wall is not locked
     real_locate = ascent.Tracker.locate
@@ -187,6 +191,29 @@ def rehearse_track(gui, photo, holds, corners):
         check("track: real MediaPipe runs and sees no hands on an empty frame", seen == {})
     else:
         print("[SKIP] real MediaPipe check (mediapipe or models/pose_landmarker_lite.task not installed)")
+
+
+def rehearse_log():
+    """Logbook: log, show, undo, N people climbed this."""
+    log = lambda **kw: ascent.cmd_log(SimpleNamespace(**{"wall": None, "route": None, "result": None, "date": None,
+                                                         "note": None, "undo": False, **kw}))
+    log(climber="Max", wall="tw", route="t1", result="sent", date=ascent.valid_date("2026-11-01"))
+    log(climber="Lena", wall="tw", route="t1", result="tried", note="slipped off 4")
+    log(climber="Jonas", wall="tw", route="t1", result="fail")
+    log(climber="Lena")
+    check("log: entries saved with a copy of the route", ascent.load_log("max")["entries"][0]["estimated_grade"]
+          .startswith("~") and ascent.load_log("max")["entries"][0]["date"] == "2026-11-01 00:00")
+    check("log: N people climbed this counts sends only, each person once",
+          ascent.climbed_by("tw", 1, "t1") == ["lena", "max"], str(ascent.climbed_by("tw", 1, "t1")))
+    log(climber="Jonas", undo=True)
+    check("log: undo removes the last entry", ascent.load_log("jonas")["entries"] == [])
+    try:
+        log(climber="Lena", wall="tw", result="sent")
+        refused = False
+    except SystemExit:
+        refused = True
+    check("log: half a command is refused", refused)
+    check("log: names become safe file names", ascent.climber_id("Lena M\u00fcller") == "lena_mueller")
 
 
 def check(label, ok, detail=""):
@@ -363,6 +390,7 @@ def main():
         check("scan refuses a size of 0 cm", refused and ascent.positive_cm("2,5") == 2.5)
 
         rehearse_track(gui, photo, holds, corners)
+        rehearse_log()
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

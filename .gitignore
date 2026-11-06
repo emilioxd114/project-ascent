@@ -8,3 +8,8 @@ __pycache__/
 venv/
 
 models/
+
+# Personal data (who climbed what, profiles, challenges) - stays on this laptop, never on GitHub
+logbook/
+profiles/
+challenges/

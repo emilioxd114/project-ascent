@@ -15,6 +15,8 @@ Commands
   python ascent.py preview --wall panel --route r1  route drawn on the saved photo (demo backup)
   python ascent.py list                             show saved walls and routes
   python ascent.py track --wall panel --route r1    record my try: hand tracking with sounds (needs mediapipe)
+  python ascent.py log --climber lena --wall panel --route r1 --result sent    log a climb (sent/tried/fail)
+  python ascent.py log --climber lena               show Lena's logbook
 
 Keys in the windows
   scan corners : click 4 corners (top-left, top-right, bottom-right, bottom-left), u = undo, Enter = done
@@ -903,6 +905,119 @@ def cmd_live(args):
     cv2.destroyAllWindows()
 
 
+# ---------------------------------------------------------------- logbook
+
+LOG_DIR = "logbook"
+RESULTS = ("sent", "tried", "fail")
+
+
+def climber_id(name):
+    """A climber's name as a safe file name: letters, digits, - and _ only, lower case."""
+    import unicodedata
+    text = name.strip().lower().replace(" ", "_")
+    for a, b in (("\u00e4", "ae"), ("\u00f6", "oe"), ("\u00fc", "ue"), ("\u00df", "ss")):
+        text = text.replace(a, b)
+    text = unicodedata.normalize("NFKD", text)
+    cid = "".join(c for c in text if c.isascii() and (c.isalnum() or c in "-_"))
+    if not cid:
+        sys.exit(f"'{name}' can't be used as a name. Use letters and digits, for example: lena")
+    return cid
+
+
+def log_path(climber):
+    return os.path.join(LOG_DIR, f"{climber_id(climber)}.json")
+
+
+def load_log(climber):
+    p = log_path(climber)
+    if not os.path.exists(p):
+        return {"climber": climber_id(climber), "entries": []}
+    with open(p, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def all_logs():
+    if not os.path.isdir(LOG_DIR):
+        return []
+    out = []
+    for f in sorted(os.listdir(LOG_DIR)):
+        if f.endswith(".json"):
+            with open(os.path.join(LOG_DIR, f), encoding="utf-8") as fh:
+                out.append(json.load(fh))
+    return out
+
+
+def climbed_by(wall_name, wall_version, route_name):
+    """Names of the climbers who sent this route on this version of the wall ("N people climbed this")."""
+    return sorted({lg["climber"] for lg in all_logs() for e in lg["entries"]
+                   if e["wall"] == wall_name and e["wall_version"] == wall_version
+                   and e["route"] == route_name and e["result"] == "sent"})
+
+
+def add_log_entry(climber, wall, route, result, by="self", date=None, note=None, attempt=None):
+    types = {h["id"]: h.get("type") for h in wall["holds"]}
+    entry = {
+        "date": date or time.strftime("%Y-%m-%d %H:%M"),
+        "wall": wall["name"], "wall_version": wall["version"], "route": route["name"],
+        "result": result, "by": by,
+        # a copy of what the route was, so the history still means something after a re-scan
+        "estimated_grade": route.get("estimated_grade"), "train": route.get("train", []),
+        "hold_types": sorted({types.get(i) for i in route["holds"] if types.get(i)}),
+        "moves": len(route["holds"]) - 1,
+    }
+    if note:
+        entry["note"] = note
+    if attempt:
+        entry["attempt"] = attempt
+    log = load_log(climber)
+    log["entries"].append(entry)
+    save_json(log_path(climber), log)
+    return entry
+
+
+def valid_date(raw):
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return time.strftime("%Y-%m-%d %H:%M", time.strptime(raw, fmt))
+        except ValueError:
+            pass
+    raise argparse.ArgumentTypeError("use YYYY-MM-DD, for example 2026-11-06")
+
+
+def cmd_log(args):
+    cid = climber_id(args.climber)
+    if args.undo:
+        log = load_log(cid)
+        if not log["entries"]:
+            sys.exit(f"{cid}'s logbook is empty.")
+        e = log["entries"].pop()
+        save_json(log_path(cid), log)
+        print(f"Removed the last entry: {e['date']}  {e['wall']} {e['route']}  {e['result']}")
+        return
+    if args.route or args.result or args.wall:
+        if not (args.wall and args.route and args.result):
+            sys.exit("To log a climb give all three: --wall, --route and --result sent|tried|fail")
+        wall, _ = load_wall(args.wall)
+        route = load_route(args.wall, args.route)
+        e = add_log_entry(cid, wall, route, args.result, "self", args.date, args.note)
+        print(f"Logged for {cid}: {e['wall']} {e['route']} {e['estimated_grade']} (estimated) - {e['result']}")
+        n = len(climbed_by(wall["name"], wall["version"], route["name"]))
+        print(f"{n} {'person has' if n == 1 else 'people have'} sent this route on this wall.")
+        return
+    log = load_log(cid)
+    if not log["entries"]:
+        print(f"{cid}'s logbook is empty. Log a climb: python ascent.py log --climber {cid} "
+              "--wall panel --route r1 --result sent")
+        return
+    print(f"Logbook of {cid} ({len(log['entries'])} climbs)")
+    for e in log["entries"]:
+        skills = ", ".join(e.get("train") or e.get("hold_types") or [])
+        extra = "  (camera)" if e.get("by") == "camera" else ""
+        note = f"  - {e['note']}" if e.get("note") else ""
+        print(f"  {e['date']}  {e['wall']} v{e['wall_version']} {e['route']:<6} {e.get('estimated_grade') or '?':<4} "
+              f"{e['result']:<5} {skills}{extra}{note}")
+
+
 # ---------------------------------------------------------------- motion tracking with audio
 
 POSE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
@@ -1179,6 +1294,14 @@ def run_track(args):
     if s["off_route"]:
         print(f"  Off-route holds touched: {s['off_route']}.", end="")
     print(f"\nThe camera's guess: {s['result']}. You know better - it is only a suggestion.")
+    if getattr(args, "climber", None):
+        if s["reached"] == 0:
+            print("No hold of the route was reached, so nothing was logged.")
+        else:
+            attempt = {k: s[k] for k in ("reached", "of", "skipped", "off_route", "seconds")}
+            add_log_entry(args.climber, wall, route, s["result"], "camera", attempt=attempt)
+            print(f"Logged for {climber_id(args.climber)} as '{s['result']}'. Wrong? Fix it with:\n"
+                  f"  python ascent.py log --climber {climber_id(args.climber)} --undo   and log it again by hand.")
     return s
 
 
@@ -1255,6 +1378,16 @@ def main():
     p.add_argument("--touch-cm", type=positive_cm, default=TOUCH_CM, help="how close a hand must be to a hold")
     p.add_argument("--pose-model", help="MediaPipe pose model file (downloaded once if missing)")
     p.add_argument("--mute", action="store_true", help="no sounds, messages only")
+    p.add_argument("--climber", help="save the attempt in this climber's logbook")
+
+    p = sub.add_parser("log", help="logbook: log a climb, or show a climber's history")
+    p.add_argument("--climber", required=True)
+    p.add_argument("--wall")
+    p.add_argument("--route")
+    p.add_argument("--result", choices=RESULTS)
+    p.add_argument("--date", type=valid_date, help="YYYY-MM-DD, default now")
+    p.add_argument("--note")
+    p.add_argument("--undo", action="store_true", help="remove the last entry")
 
     p = sub.add_parser("preview")
     p.add_argument("--wall", required=True)
@@ -1262,7 +1395,8 @@ def main():
 
     args = ap.parse_args()
     handler = {"selftest": cmd_selftest, "scan": cmd_scan, "generate": cmd_generate, "build": cmd_build,
-               "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track}[args.cmd]
+               "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track,
+               "log": cmd_log}[args.cmd]
     sys.exit(handler(args) or 0)
 
 

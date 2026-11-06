@@ -20,6 +20,7 @@ The eight questions to ask of any feature:
 - **Climbing videos show people** — the climber and bystanders. Process on the device, store derived coordinates rather than raw video, and film only consenting people in demos. Demo recordings are excluded from git for this reason (`.gitignore`).
 - **Minors (Max):** parental consent; private by default; no public leaderboards with real names; care with any social features.
 - **Rehab (Laura):** health data is the strictest category. Keep it separate, minimal, and under the therapist's control.
+- **Logbook, profiles and challenges** are personal data. In the prototype they stay on the laptop in `logbook/`, `profiles/` and `challenges/`, one file per person where possible, and are excluded from git. Camera-logged attempts store counts only (holds reached, skipped, off-route, seconds), never video or hand positions.
 - **Wall photos** may contain people in the background; crop or blur before sharing.
 - **Visibility settings** (private / friends / public) must exist before any sharing feature ships.
 

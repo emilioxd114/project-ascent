@@ -13,7 +13,8 @@ Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a
 | `live` | Route on the live camera. Keys: g new route, n next, f full screen, s screenshot, v record, q quit. `--video` replays a file instead of the webcam. |
 | `preview` | Route drawn on the saved photo — the no-camera backup. |
 | `list` | Walls and routes. |
-| `track` | "Record my try": the route on the live camera plus MediaPipe hand tracking; a sound for each hold reached in order, an alert for an off-route or out-of-order hold. Keys: m sound on/off, q stop. `--video`, `--mute`, `--touch-cm`, `--pose-model`. Needs `pip install mediapipe`. |
+| `track` | "Record my try": the route on the live camera plus MediaPipe hand tracking; a sound for each hold reached in order, an alert for an off-route or out-of-order hold. Keys: m sound on/off, q stop. `--video`, `--mute`, `--touch-cm`, `--pose-model`. Needs `pip install mediapipe`. `--climber NAME` saves the camera's guess in the logbook. |
+| `log` | Logbook. `log --climber lena --wall panel --route r1 --result sent\|tried\|fail [--note ...] [--date YYYY-MM-DD]` adds a climb; `log --climber lena` shows the history; `--undo` removes the last entry. |
 
 ## Data on disk
 
@@ -54,6 +55,23 @@ walls/<wall>/
 ```
 
 The first hold is the start (green), the last the finish (red), the rest the middle (blue).
+
+**logbook/&lt;climber&gt;.json** — one file per person, so one person can be deleted from everything (GDPR question 6). Kept out of git.
+
+```json
+{"climber": "lena", "entries": [
+  {"date": "2026-11-06 10:40", "wall": "panel", "wall_version": 1, "route": "r1",
+   "result": "sent", "by": "self", "estimated_grade": "~6a", "train": ["sloper"],
+   "hold_types": ["jug", "sloper"], "moves": 5, "note": "...",
+   "attempt": {"reached": 6, "of": 6, "skipped": [], "off_route": [], "seconds": 21.4}}
+]}
+```
+
+- `result`: **sent** = reached the finish in order; **tried** = got past the start; **fail** = didn't get going.
+- `by`: `self` (typed) or `camera` (from `track --climber`). `attempt` exists only for camera entries and holds counts, never video or raw hand positions.
+- Each entry keeps a copy of the route's grade, skills and hold types, so the history still means something after the wall is re-scanned.
+- Names become file names: lower case, spaces to `_`, umlauts to ae/oe/ue/ss, other characters dropped.
+- **"N people climbed this"** = number of different climbers with a `sent` entry for that route on that wall version.
 
 ## Geometry
 
@@ -100,7 +118,7 @@ The first hold is the start (green), the last the finish (red), the rest the mid
 ## Tests
 
 - `python ascent.py selftest` — install check, overlay error on a synthetic warped wall.
-- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock). 27 checks, plus one that runs the real MediaPipe model when it is installed.
+- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock), logbook (log, undo, N people climbed this, names). 33 checks, plus one that runs the real MediaPipe model when it is installed.
 
 **Not covered:** a real webcam, real windows on Windows, the real panel under venue light.
 
