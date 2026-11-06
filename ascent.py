@@ -489,6 +489,94 @@ def detect_holds(photo, corners, markers_px=None):
     return holds
 
 
+def detect_board(photo):
+    """Finds the climbing board in a photo without markers or taps: the largest plain, four-sided area whose
+    outline is a real edge in the picture. Rules, no AI. Returns the 4 corners (top-left, top-right,
+    bottom-right, bottom-left) in photo pixels, or None when there is no convincing board - then the person
+    taps the corners. Never guesses: a board cut off by the picture's edge, or a wall that fills the whole
+    picture, gives None."""
+    h0, w0 = photo.shape[:2]
+    f = min(1.0, 640.0 / max(h0, w0))
+    img = cv2.resize(photo, (int(w0 * f), int(h0 * f)), interpolation=cv2.INTER_AREA) if f < 1 else photo.copy()
+    h, w = img.shape[:2]
+    frame_area = float(h * w)
+    blur = cv2.GaussianBlur(img, (5, 5), 0)
+    lab = cv2.cvtColor(blur, cv2.COLOR_BGR2LAB).astype(np.float32)
+    gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
+    edges = cv2.dilate(cv2.Canny(gray, 40, 120), np.ones((5, 5), np.uint8))
+
+    def as_quad(cnt, bonus=0.0):
+        peri = cv2.arcLength(cnt, True)
+        for eps in (0.02, 0.03, 0.05, 0.08):
+            ap = cv2.approxPolyDP(cnt, eps * peri, True)
+            if len(ap) == 4:
+                q = ap.reshape(4, 2).astype(np.float32)
+                break
+        else:
+            q = cv2.boxPoints(cv2.minAreaRect(cnt)).astype(np.float32)
+            if cv2.contourArea(cnt) < 0.8 * cv2.contourArea(q):
+                return None                                     # not a filled four-sided shape
+        q = order_corners(q)
+        area = quad_area(q)
+        if not cv2.isContourConvex(q.reshape(-1, 1, 2)) or not 0.12 * frame_area <= area <= 0.97 * frame_area:
+            return None
+        if min(np.linalg.norm(q[i] - q[(i + 1) % 4]) for i in range(4)) < 0.12 * min(h, w):
+            return None
+        margin = 0.02 * max(h, w)                               # the whole board must be in the picture:
+        on_edge = sum(1 for i in range(4) if all(min(p[0], p[1], w - p[0], h - p[1]) < margin
+                                                 for p in (q[i], q[(i + 1) % 4])))
+        if on_edge > 1:                                         # at most one side along the picture's edge
+            return None
+        band = np.zeros((h, w), np.uint8)                       # its outline must be a real edge, not a guess
+        cv2.polylines(band, [np.int32(q)], True, 255, 5)
+        support = float((edges[band > 0] > 0).mean()) if band.any() else 0.0
+        if support < 0.6:
+            return None
+        return q, area + bonus * support
+
+    best = None
+
+    def offer(c):
+        nonlocal best
+        if c and (best is None or c[1] > best[1]):
+            best = c
+
+    # A: the board is one plain colour - everything near the colour of the middle of the picture
+    cy, cx = h // 2, w // 2
+    mid = lab[cy - h // 8:cy + h // 8, cx - w // 8:cx + w // 8].reshape(-1, 3)
+    centre = np.median(mid, axis=0)
+    spread = np.median(np.linalg.norm(mid - centre, axis=1))
+    dist = np.linalg.norm(lab - centre, axis=2)
+    for k in (2.5, 4.0):
+        m = (dist < max(12.0, k * spread + 6)).astype(np.uint8) * 255
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((int(0.04 * min(h, w)) | 1,) * 2, np.uint8))
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((7, 7), np.uint8))
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(m)
+        if n < 2:
+            continue
+        comp = (labels == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))).astype(np.uint8) * 255
+        cnts, _ = cv2.findContours(comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)   # holds inside: filled
+        if cnts:
+            offer(as_quad(max(cnts, key=cv2.contourArea), bonus=frame_area))   # a plain area beats edges alone
+    # B: the board's outline as edges
+    cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for c in sorted(cnts, key=cv2.contourArea, reverse=True)[:5]:
+        if cv2.contourArea(c) < 0.12 * frame_area:
+            break
+        offer(as_quad(c))
+    if best is None:
+        return None
+    q = (best[0] / f).astype(np.float32)
+    # sharpen each corner on the full-size photo; a corner that wanders off is kept where it was
+    g = cv2.cvtColor(photo, cv2.COLOR_BGR2GRAY)
+    win = max(3, int(0.007 * max(h0, w0)))
+    fine = cv2.cornerSubPix(g, q.reshape(-1, 1, 2).copy(), (win, win), (-1, -1),
+                            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.01)).reshape(4, 2)
+    moved = np.linalg.norm(fine - q, axis=1)
+    q[moved < 2 * win] = fine[moved < 2 * win]
+    return q
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_selftest(args):
@@ -819,17 +907,74 @@ def save_scan(name, photo, corners, w_cm, h_cm, assumed, holds, markers_px=None)
     return wall
 
 
-def save_route(wall, ids, name, how, height, train=(), by=None):
-    warnings = route_warnings(wall, ids, height)
+def route_record(wall, ids, name, how, height, train=(), by=None):
+    """The route as it is stored - grade, warnings and all - without writing it (a preview)."""
     route = {
-        "name": name, "wall": wall["name"], "wall_version": wall["version"], "holds": ids,
+        "name": name, "wall": wall["name"], "wall_version": wall["version"], "holds": list(ids),
         "estimated_grade": estimate_grade(wall, ids, height), "train": list(train), "made_by": how,
-        "height_cm": height, "created": time.strftime("%Y-%m-%d %H:%M"), "warnings": warnings,
+        "height_cm": height, "created": time.strftime("%Y-%m-%d %H:%M"), "warnings": route_warnings(wall, ids, height),
     }
     if by:
         route["by"] = climber_id(by)           # who set it - optional, older routes have no "by"
+    return route
+
+
+def save_route(wall, ids, name, how, height, train=(), by=None):
+    route = route_record(wall, ids, name, how, height, train, by)
     save_json(wall_path(wall["name"], "routes", f"{name}.json"), route)
     return route
+
+
+# The phone's one-tap skills. Reach and traverse are the generator's own skills; easy and hard are its levels.
+PHONE_SKILLS = {"reach": (["reach"], "medium"), "traverse": (["traverse"], "medium"),
+          "easy": ([], "easy"), "medium": ([], "medium"), "hard": ([], "hard")}
+
+
+def height_for_wall(wall):
+    """A climber height scaled to the wall, for when nobody typed a size or a height: 0.55 x the wall's
+    width, so the reach is about 0.3 x the width - a person on a 300 cm panel, a puppet on a 60 cm prop
+    wall, and the same proportions when the width was only assumed."""
+    return round(0.55 * float(wall["size_cm"]["w"]), 1)
+
+
+def phone_make_route(req):
+    """'Make route' on the phone: a route for a skill, previewed on the photo, saved only by /api/route/save."""
+    wall, ref = load_wall(safe_name(req.get("wall") or ""))
+    skill = req.get("skill") or "medium"
+    if skill not in PHONE_SKILLS:
+        raise ValueError(f"Unknown skill '{skill}'. Choose reach, traverse, easy or hard.")
+    train, level = PHONE_SKILLS[skill]
+    moves = int(req.get("moves") or 5)
+    if not 3 <= moves <= 12:
+        raise ValueError("Holds per route: 3 to 12.")
+    height = float(req["height"]) if req.get("height") else height_for_wall(wall)
+    ids = None
+    for n in range(moves, 2, -1):
+        ids = generate_route(wall, n, height, train, level, req.get("seed"))
+        if ids:
+            break
+    if not ids:
+        raise ValueError("No route fits this wall for that skill. Try another skill, or scan with more holds.")
+    route = route_record(wall, ids, "preview", "generated", height, train)
+    px = {h["id"]: h["px"] for h in wall["holds"]}
+    return {"holds": ids, "holds_px": [px[i] for i in ids], "grade": route["estimated_grade"],
+            "warnings": route["warnings"], "train": train, "level": level, "skill": skill, "height": height,
+            "short": len(ids) < moves, "w": ref.shape[1], "h": ref.shape[0]}
+
+
+def phone_save_route(req):
+    """'Use this route': saves the previewed route under the next name (r1, r2, ...)."""
+    wall, _ = load_wall(safe_name(req.get("wall") or ""))
+    known = {h["id"] for h in wall["holds"]}
+    ids = [int(i) for i in req.get("holds") or []]
+    if len(ids) < 2 or len(set(ids)) != len(ids) or any(i not in known for i in ids):
+        raise ValueError("The route must name 2 or more different holds of this wall.")
+    skill = req.get("skill") if req.get("skill") in PHONE_SKILLS else "medium"
+    height = float(req["height"]) if req.get("height") else height_for_wall(wall)
+    name = next_route_name(wall["name"])
+    route = save_route(wall, ids, name, "generated", height, PHONE_SKILLS[skill][0], req.get("by") or None)
+    return {"route": name, "grade": route["estimated_grade"], "holds": len(ids), "warnings": route["warnings"],
+            "train": route["train"]}
 
 
 def route_names(wall_name):
@@ -2373,14 +2518,21 @@ class TrackSession(PhoneSession):
     """Record my try from the phone: the same AttemptWatcher and MediaPipe hands as 'track', on the laptop.
     Hands only count while the wall is locked; the phone plays the sounds."""
 
-    def __init__(self, wall_name, route_name, climber=None, touch_cm=TOUCH_CM):
+    def __init__(self, wall_name, route_name, climber=None, touch_cm=TOUCH_CM, touch="pose", sticker="green"):
         if not route_name:
             raise ValueError("Choose a route to record.")
         super().__init__(wall_name, route_name)
         self.climber = climber_id(climber) if climber else None
         self.touch_cm = float(touch_cm)
         self.R = rectify_matrix(self.wall["corners_px"], self.wall["size_cm"]["w"], self.wall["size_cm"]["h"])
-        self.detector = make_pose_detector()
+        self.touch = touch
+        if touch == "sticker":                       # a coloured sticker on the fingertip, no AI, no MediaPipe
+            if sticker not in STICKER_COLOURS:
+                raise ValueError(f"Sticker colours: {', '.join(STICKER_COLOURS)}.")
+            self.detector = make_sticker_detector(sticker)
+            self.detector.prepare(self.wall, self.ref)
+        else:
+            self.detector = make_pose_detector()
         self.reset()
 
     def reset(self):
@@ -2401,9 +2553,21 @@ class TrackSession(PhoneSession):
         self.last_t = t
         w = self.watcher
         out.update(next=w.next, of=len(w.route), events=[])
+        if self.touch == "sticker":
+            out["sticker"] = self.detector.name
+            if q.get("tapx") and q.get("tapy"):               # a tap on the sticker teaches its exact colour
+                try:
+                    x, y = int(float(q["tapx"][0])), int(float(q["tapy"][0]))
+                except ValueError:
+                    raise ValueError("The tap position must be numbers.")
+                if 0 <= x < img.shape[1] and 0 <= y < img.shape[0]:
+                    out["learned"] = bool(self.detector.sample(img, x, y))
+                    out["sticker"] = self.detector.name
+                else:
+                    out["learned"] = False
         if H is None:
             return                                            # never guess: no lock, nothing counts
-        hands = self.detector.hands(img, t)
+        hands = self.detector.hands(img, t, H) if self.touch == "sticker" else self.detector.hands(img, t)
         if hands:
             sides = list(hands)
             cms = transform(self.R @ np.linalg.inv(H), [hands[s] for s in sides])
@@ -2481,12 +2645,50 @@ def phone_scan(req):
         t = hd.get("type") or None
         if t is not None and t not in HOLD_TYPES.values():
             raise ValueError(f"Unknown hold type '{t}'.")
-        holds.append({"px": point(hd["px"]), "type": t})
+        hold = {"px": point(hd["px"]), "type": t}
+        if hd.get("colour") in HOLD_COLOURS:                 # from the automatic detection, optional
+            hold["colour"] = hd["colour"]
+        holds.append(hold)
     if not holds:
         raise ValueError("Tap at least one hold.")
     wall = save_scan(name, photo, corners, w_cm, h_cm, assumed, holds, markers_px)
     return {"wall": name, "version": wall["version"], "holds": len(holds),
             "typed": sum(1 for x in holds if x["type"]), "size_cm": wall["size_cm"]}
+
+
+def phone_find_wall(req):
+    """The phone's one-tap scan: from one photo, the wall's corners and its holds. Corners come from the
+    4 printed markers when they are all in the photo, else from the board's outline, else the phone asks
+    for 4 taps (and may send them as 'corners'). Holds: the same detect_holds as 'scan --auto'."""
+    photo = decode_photo(req["image"])
+    ph, pw = photo.shape[:2]
+    found = aruco_detect(cv2.cvtColor(photo, cv2.COLOR_BGR2GRAY))
+    markers_px, how, corners = None, None, None
+    if len(found) >= 4:
+        corners = order_corners([c.mean(axis=0) for c in found.values()])
+        markers_px = {str(k): v.tolist() for k, v in found.items()}
+        how = "markers"
+    elif req.get("corners"):
+        pts = [[float(p[0]), float(p[1])] for p in req["corners"]]
+        if len(pts) != 4 or any(not (0 <= x <= pw and 0 <= y <= ph) for x, y in pts):
+            raise ValueError("Tap exactly 4 corners inside the photo.")
+        corners = order_corners(pts)
+        if quad_area(corners) < 0.01 * pw * ph or not cv2.isContourConvex(corners.reshape(-1, 1, 2)):
+            raise ValueError("The 4 corners don't make a proper wall shape - tap them again.")
+        how = "taps"
+    else:
+        corners = detect_board(photo)
+        how = "outline" if corners is not None else None
+    out = {"markers_found": len(found), "how": how, "corners": None, "holds": [], "w": pw, "h": ph}
+    if corners is None:
+        out["message"] = (f"Found {len(found)} of 4 markers and no clear board outline. "
+                          "Tap the 4 corners of the climbing area.")
+        return out
+    holds = detect_holds(photo, corners, markers_px)
+    out.update(corners=np.asarray(corners).tolist(), holds=holds)
+    if not holds:
+        out["message"] = "No holds found on this board. Tap each hold, or take the photo again in better light."
+    return out
 
 
 def walls_overview():
@@ -2589,6 +2791,15 @@ def make_handler(code, sessions):
                     return self.send(200, f.read(), types[os.path.splitext(fname)[1]], cookie=True)
             if u.path == "/api/walls":
                 return self.send(200, {"walls": walls_overview()})
+            if u.path == "/api/wall/photo":                 # the saved photo, to draw a route on it
+                try:
+                    p = wall_path(safe_name((q.get("wall") or [""])[0]), "ref.jpg")
+                except ValueError as e:
+                    return self.send(400, {"error": str(e)})
+                if not os.path.exists(p):
+                    return self.send(404, {"error": "No such wall."})
+                with open(p, "rb") as f:
+                    return self.send(200, f.read(), "image/jpeg")
             return self.send(404, {"error": "not found"})
 
         def do_POST(self):
@@ -2622,10 +2833,12 @@ def make_handler(code, sessions):
             if path == "/api/track/start":
                 req = json.loads(self.body() or b"{}")
                 s = TrackSession(safe_name(req["wall"]), req.get("route") or None, req.get("climber") or None,
-                                 float(req.get("touch_cm") or TOUCH_CM))
+                                 float(req.get("touch_cm") or TOUCH_CM),
+                                 "sticker" if req.get("touch") == "sticker" else "pose",
+                                 str(req.get("sticker") or "green"))
                 sid = add_session(s)
                 card = safety_card_due(s.climber, s.wall["name"]) if s.climber else None
-                return {"sid": sid, **s.info(), "safety": card,
+                return {"sid": sid, **s.info(), "safety": card, "touch": s.touch,
                         "route_holds": len(s.route["holds"]), "climber": s.climber}
             if path in ("/api/track/finish", "/api/track/reset"):
                 s = self.session(q)
@@ -2665,6 +2878,12 @@ def make_handler(code, sessions):
                 found = aruco_detect(cv2.cvtColor(photo, cv2.COLOR_BGR2GRAY))
                 corners = order_corners([c.mean(axis=0) for c in found.values()]).tolist() if len(found) >= 4 else None
                 return {"found": len(found), "corners": corners}
+            if path == "/api/route/make":
+                return phone_make_route(json.loads(self.body() or b"{}"))
+            if path == "/api/route/save":
+                return phone_save_route(json.loads(self.body() or b"{}"))
+            if path == "/api/scan/auto":
+                return phone_find_wall(json.loads(self.body()))
             if path == "/api/scan":
                 return phone_scan(json.loads(self.body()))
             raise ValueError("Unknown API call.")

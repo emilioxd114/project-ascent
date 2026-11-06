@@ -709,6 +709,152 @@ def rehearse_serve_track(photo):
         httpd.server_close()
 
 
+def rehearse_serve_flow(photo, mphoto, holds, corners):
+    """The phone's one-link flow: photo -> corners and holds found by the laptop -> route by skill, previewed
+    then saved -> sticker tracking with sounds, colour taught by a tap. Nothing typed, nothing measured."""
+    import base64
+    b64 = lambda img: "data:image/jpeg;base64," + base64.b64encode(cv2.imencode(".jpg", img)[1]).decode()
+
+    def score(det, truth):
+        P, T = np.array([d["px"] for d in det]), np.array(truth, float)
+        d = np.linalg.norm(T[:, None] - P[None], axis=2)
+        return int((d.min(axis=1) < 10).sum()), int((d.min(axis=0) >= 10).sum())
+
+    # the board outline, found without markers or taps
+    q = ascent.detect_board(photo)
+    xx = np.mgrid[0:720, 0:1280][1]
+    lit = np.clip(photo * (0.45 + 0.75 * xx / 1280)[..., None], 0, 255).astype(np.uint8)
+    H = np.array([[0.9, -0.1, 80], [0.08, 0.95, 20], [0.00005, 0.00004, 1]])
+    warped = cv2.warpPerspective(photo, H, (1280, 720), borderValue=(30, 30, 30))
+    qw = ascent.detect_board(warped)
+    ql = ascent.detect_board(lit)
+    check("board outline: found within 2 px, also in uneven light and at an angle",
+          q is not None and np.linalg.norm(q - corners, axis=1).max() < 2 and ql is not None
+          and np.linalg.norm(ql - corners, axis=1).max() < 2 and qw is not None
+          and np.linalg.norm(qw - ascent.transform(H, corners), axis=1).max() < 2,
+          "" if q is None else str(np.round(np.linalg.norm(q - corners, axis=1), 1)))
+    noise = np.random.default_rng(1).integers(0, 255, (720, 1280, 3), dtype=np.uint8)
+    check("board outline: never guesses - a cut-off board, a blank or noisy picture give nothing",
+          ascent.detect_board(photo[100:, :]) is None and ascent.detect_board(np.full((720, 1280, 3), 30, np.uint8))
+          is None and ascent.detect_board(noise) is None)
+
+    httpd, phone, _ = start_server()
+    try:
+        st, a, _ = phone.post("/api/scan/auto", {"image": b64(mphoto)})
+        mh = make_wall_photo(seed=9, markers=True)[1]
+        f, x = score(a["holds"], mh) if a.get("holds") else (0, 99)
+        check("flow: markers in the photo give the corners, holds found", st == 200 and a["how"] == "markers"
+              and a["markers_found"] == 4 and f >= 25 and x <= 1, f"{a.get('how')} {f} found {x} false")
+        st, a, _ = phone.post("/api/scan/auto", {"image": b64(photo)})
+        f, x = score(a["holds"], holds) if a.get("holds") else (0, 99)
+        check("flow: no markers - the board outline gives the corners, holds found", st == 200
+              and a["how"] == "outline" and np.allclose(a["corners"], corners, atol=2) and f >= 25 and x <= 1,
+              f"{a.get('how')} {f} found {x} false")
+        st, a, _ = phone.post("/api/scan/auto", {"image": b64(photo[100:, :])})
+        check("flow: no markers, no outline - the phone is asked for 4 taps, no holds guessed", st == 200
+              and a["how"] is None and a["corners"] is None and a["holds"] == [] and "Tap" in a["message"])
+        st, a, _ = phone.post("/api/scan/auto", {"image": b64(photo),
+                                                 "corners": [list(map(float, c)) for c in corners[[2, 0, 3, 1]]]})
+        f, x = score(a["holds"], holds) if a.get("holds") else (0, 99)
+        check("flow: ... and with the taps (any order), holds are found", st == 200 and a.get("how") == "taps"
+              and f >= 25 and x <= 1, f"{st} {a.get('how', a)} {f} found {x} false")
+        st, bad, _ = phone.post("/api/scan/auto", {"image": b64(photo[100:, :]), "corners": [[1, 1], [2, 2]]})
+        check("flow: bad taps are refused", st == 400)
+
+        # saving without a size: 300 cm assumed, colours kept
+        st, a, _ = phone.post("/api/scan/auto", {"image": b64(photo)})
+        st, r, _ = phone.post("/api/scan", {"wall": "flow", "image": b64(photo), "corners": a["corners"],
+                                            "width": None, "height": None, "holds": a["holds"]})
+        wall = json.load(open("walls/flow/wall.json"))
+        check("flow: saved with an assumed size, hold colours kept", st == 200 and wall["size_cm"]["assumed"]
+              and sum(1 for h in wall["holds"] if h.get("colour")) == len(wall["holds"]), str(r))
+        st, jpg, r2 = phone.request("GET", "/api/wall/photo?wall=flow")
+        st2, _, _ = phone.request("GET", "/api/wall/photo?wall=nope")
+        st3, _, _ = phone.request("GET", "/api/wall/photo?wall=../x")
+        check("flow: the wall's photo can be fetched (with the code), nothing else", st == 200
+              and r2.getheader("Content-Type") == "image/jpeg" and len(jpg) > 1000 and st2 == 404 and st3 == 400)
+
+        # routes by skill: reach scaled to the wall, previewed, then saved
+        made = {}
+        for skill in ("reach", "traverse", "easy", "hard"):
+            st, made[skill], _ = phone.post("/api/route/make", {"wall": "flow", "skill": skill, "seed": 3})
+        ok = all(st == 200 and 4 <= len(m["holds"]) <= 5 and len(m["holds_px"]) == len(m["holds"])
+                 and m["grade"].startswith("~") and not any("past" in w for w in m["warnings"])
+                 for m in made.values())
+        check("flow: a route for each skill, within a reach scaled to the wall, grade with ~", ok
+              and made["reach"]["train"] == ["reach"] and made["hard"]["level"] == "hard"
+              and made["reach"]["height"] == 165.0, str({k: len(v.get("holds", [])) for k, v in made.items()}))
+        cm = {h["id"]: h["cm"] for h in wall["holds"]}
+        trav = made["traverse"]["holds"]
+        check("flow: traverse goes sideways", abs(cm[trav[-1]][0] - cm[trav[0]][0]) >= 0.4 * 300)
+        st, again, _ = phone.post("/api/route/make", {"wall": "flow", "skill": "reach", "seed": 4})
+        check("flow: 'Another one' gives a different route, nothing saved yet",
+              again["holds"] != made["reach"]["holds"] and ascent.route_names("flow") == [])
+        st, saved, _ = phone.post("/api/route/save", {"wall": "flow", "holds": again["holds"], "skill": "reach"})
+        rt = ascent.load_route("flow", "r1")
+        check("flow: 'Use this route' saves it as r1 with its skill", st == 200 and saved["route"] == "r1"
+              and rt["holds"] == again["holds"] and rt["train"] == ["reach"] and rt["height_cm"] == 165.0)
+        st, _, _ = phone.post("/api/route/save", {"wall": "flow", "holds": [1, 1]})
+        st2, _, _ = phone.post("/api/route/make", {"wall": "flow", "skill": "flying"})
+        check("flow: bad routes and skills are refused", st == 400 and st2 == 400)
+
+        # climbing with a sticker on the fingertip: frames from the phone, sounds back, colour by a tap
+        px = {h["id"]: h["px"] for h in wall["holds"]}
+        route = rt["holds"]
+        off = [i for i in px if i not in route and all(np.linalg.norm(np.subtract(px[i], px[j])) > 60 for j in route)][0]
+        st, info, _ = phone.post("/api/track/start", {"wall": "flow", "route": "r1", "touch": "sticker",
+                                                      "sticker": "green"})
+        check("flow: sticker tracking starts without MediaPipe", st == 200 and info["touch"] == "sticker", str(info))
+        sid = info["sid"]
+        Hs = camera_path(80)
+        events, t, names = [], 0.0, []
+
+        def send(i, hold, colour=(60, 230, 60), extra=""):
+            nonlocal t
+            img, Hf = phone_view(photo, Hs[i])
+            if hold:
+                x, y = ascent.transform(Hf, [px[hold]])[0]
+                cv2.circle(img, (int(x) + 3, int(y) - 4), 5, colour, -1, cv2.LINE_AA)
+            st, a, _ = phone.frame(sid, img, f"&t={t:.3f}" + extra)
+            t += 1 / 8
+            events.extend(e["sound"] for e in a.get("events", []))
+            names.append(a.get("sticker"))
+            return a, (x, y) if hold else None
+
+        script = [None] * 2 + [h for h in route[:2] for _ in range(6)] + [off] * 6 + \
+                 [h for h in route[2:] for _ in range(6)]
+        for i, hold in enumerate(script):
+            a, _ = send(i, hold)
+        check("flow: sticker touches give the right sounds - good, off-route, top", events ==
+              ["good"] * 2 + ["off"] + ["good"] * (len(route) - 3) + ["top"], str(events))
+        st, res, _ = phone.post(f"/api/track/finish?sid={sid}")
+        check("flow: the result is a 'tried' with the off-route hold", res["result"] == "tried"
+              and res["off_route"] == [off], str(res))
+        # a pink sticker is invisible to a green detector until the person taps it once
+        events.clear()
+        for i, hold in enumerate([route[0]] * 6):
+            a, pos = send(i, hold, colour=(180, 60, 230))
+        check("flow: a sticker of another colour is not seen", events == [] and a["sticker"] == "green")
+        a, pos = send(7, route[0], colour=(180, 60, 230), extra=f"&tapx={pos[0]:.0f}&tapy={pos[1]:.0f}")
+        check("flow: one tap on the sticker teaches its colour", a.get("learned") is True
+              and a["sticker"].startswith("clicked"), str(a.get("sticker")))
+        for i, hold in enumerate([route[0]] * 6, start=8):
+            send(i, hold, colour=(180, 60, 230))
+        check("flow: ... and then it counts", events == ["good"], str(events))
+        a, _ = send(20, None, extra="&tapx=5&tapy=5")
+        check("flow: a tap on plain wall teaches nothing", a.get("learned") is False)
+        st, _, _ = phone.post("/api/track/start", {"wall": "flow", "route": "r1", "touch": "sticker",
+                                                   "sticker": "neon"})
+        check("flow: an unknown sticker colour is refused", st == 400)
+        st, js, _ = phone.request("GET", "/web/flow.js", code=False)
+        st2, page, _ = phone.request("GET", "/")
+        check("flow: the Climb tab is on the one page", st == 200 and b"/api/scan/auto" in js
+              and b"/api/route/make" in js and b'data-tab="climb"' in page and b"web/flow.js" in page)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def rehearse_sticker(photo, mphoto, holds, corners):
     """track with coloured stickers instead of MediaPipe: touches, sounds, two stickers, same-colour holds,
     markers mode, colour by click, nothing without a lock."""
@@ -1057,6 +1203,7 @@ def main():
         rehearse_serve_track(photo)
         rehearse_sticker(photo, mphoto, holds, corners)
         rehearse_auto_scan(gui)
+        rehearse_serve_flow(photo, mphoto, holds, corners)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)
