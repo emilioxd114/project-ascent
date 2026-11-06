@@ -111,7 +111,7 @@ The team's sticky-note board, triaged for the hackathon:
 
 ## Roadmap
 
-- **Now (hackathon):** laptop prototype on the test panel — scan, generate, build, live overlay; clickable design of the phone app. Since 6 Nov the phone can be the camera: `serve` runs a local HTTPS server on the laptop, and phone pages (`/live`, `/scan`, `/track`) send camera frames to it.
+- **Now (hackathon):** laptop prototype on the test panel — scan, generate, build, live overlay; clickable design of the phone app. Since 6 Nov the phone can be the camera: `serve` runs a local HTTPS server on the laptop, and one phone page with three tabs (See a route, Scan a wall, Record my try) sends camera frames to it.
 - **Phase 1:** phone app for Lena's journey; accounts and a shared route database; duplicate walls merged by gym and location.
 - **Phase 2 — Max:** creating and sharing routes outdoors, offline mode, youth-safe gamification, parental consent.
 - **Phase 2 — Laura:** therapist dashboard, prescribed routes, session documentation.

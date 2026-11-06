@@ -476,9 +476,15 @@ def rehearse_serve_live(photo):
     try:
         st, body, _ = phone.request("GET", "/live", code=False)
         check("serve: no code, no page", st == 403)
-        st, body, r = phone.request("GET", "/live")
-        check("serve: the code opens /live and sets a cookie", st == 200 and b"/api/frame" in body
+        st, body, r = phone.request("GET", "/")
+        st2, old, _ = phone.request("GET", "/live")
+        check("serve: the code opens the one page (three tabs) and sets a cookie", st == 200
+              and all(b'data-tab="%s"' % t for t in (b"live", b"scan", b"track")) and old == body
+              and all(f"web/{f}.js".encode() in body for f in ("common", "live", "scan", "track"))
               and "ascent_code=k3y5ab" in (r.getheader("Set-Cookie") or ""))
+        st, _, _ = phone.post("/api/log", {"message": "test error \u00e4", "page": "#scan"})
+        st2, _, _ = phone.post("/api/log", {"message": "x"}, code=False)
+        check("serve: phone errors are printed on the laptop (code needed)", st == 200 and st2 == 403)
         st, _, _ = phone.request("GET", "/api/walls", code=False)
         check("serve: no code, no data", st == 403)
         st, js, _ = phone.request("GET", "/web/common.js", code=False)
@@ -605,8 +611,9 @@ def rehearse_serve_scan(photo, holds, corners, mphoto):
         check("scan page: bad scans are refused and nothing is saved", codes == [400] * len(bad)
               and json.load(open("walls/phonewall/wall.json"))["version"] == 2
               and not os.path.exists("walls/evil"), str(codes))
-        st, page, _ = phone.request("GET", "/scan")
-        check("scan page: /scan loads", st == 200 and b"/api/scan" in page)
+        st, js, _ = phone.request("GET", "/web/scan.js", code=False)
+        check("scan page: scan.js loads, with the in-page camera", st == 200 and b"/api/scan" in js
+              and b"startCamera" in js)
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -689,8 +696,8 @@ def rehearse_serve_track(photo):
         st4, r4, _ = phone.post(f"/api/track/finish?sid={r3['sid']}")
         check("track page: no route, no MediaPipe, or a live session: a clear message, server stays up",
               (st, st2, st3, st4) == (400, 400, 200, 400) and "MediaPipe" in r2["error"], f"{st} {st2} {st3} {st4}")
-        st, page, _ = phone.request("GET", "/track")
-        check("track page: /track loads", st == 200 and b"AudioContext" in page)
+        st, js, _ = phone.request("GET", "/web/track.js", code=False)
+        check("track page: track.js loads", st == 200 and b"AudioContext" in js)
         for _ in range(9):
             ascent.make_pose_detector = lambda path=None: FakePose()
             phone.post("/api/track/start", {"wall": "tw", "route": "t1"})

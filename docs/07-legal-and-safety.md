@@ -21,7 +21,7 @@ The eight questions to ask of any feature:
 - **Minors (Max):** parental consent; private by default; no public leaderboards with real names; care with any social features.
 - **Rehab (Laura):** health data is the strictest category. Keep it separate, minimal, and under the therapist's control.
 - **Logbook, profiles and challenges** are personal data. In the prototype they stay on the laptop in `logbook/`, `profiles/` and `challenges/`, one file per person where possible, and are excluded from git. Camera-logged attempts store counts only (holds reached, skipped, off-route, seconds), never video or hand positions.
-- **Phone as camera (`serve`):** camera frames travel over the local Wi-Fi to the laptop, encrypted (HTTPS), are processed in memory and never saved. Only someone with the access code can use the pages. Nothing goes to the internet. `/track` shows the AI notice (Art. 50) and the "does not judge whether a movement is safe" line before the camera starts.
+- **Phone as camera (`serve`):** camera frames travel over the local Wi-Fi to the laptop, encrypted (HTTPS), are processed in memory and never saved. Only someone with the access code can use the pages. Nothing goes to the internet. The Record my try tab shows the AI notice (Art. 50) and the "does not judge whether a movement is safe" line before the camera starts.
 - **Wall photos** may contain people in the background; crop or blur before sharing.
 - **Visibility settings** (private / friends / public) must exist before any sharing feature ships.
 

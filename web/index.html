@@ -2,20 +2,184 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Project Ascent</title>
 <link rel="stylesheet" href="web/style.css">
 </head>
 <body>
-<div class="page">
-  <h1>Project Ascent</h1>
-  <p class="muted">The phone is the camera. The laptop matches the wall and sends back where to draw.</p>
-  <div class="big-links">
-    <a data-page="/live"><b>See a route on the wall</b><span class="muted">Live overlay - the demo</span></a>
-    <a data-page="/scan"><b>Scan a wall</b><span class="muted">Photo, 4 corners, size, holds</span></a>
-    <a data-page="/track"><b>Record my try</b><span class="muted">Hand tracking with sounds</span></a>
+<!-- One page, three tabs. The laptop does the vision work; this page is the camera and the screen. -->
+<nav id="tabs" class="tabs">
+  <a href="#live" data-tab="live">See a route</a>
+  <a href="#scan" data-tab="scan">Scan a wall</a>
+  <a href="#track" data-tab="track">Record my try</a>
+</nav>
+
+<!-- ============================================================ See a route (live overlay) -->
+<section id="view-live" class="view">
+  <div id="live-setup" class="page">
+    <h1>See a route on the wall</h1>
+    <label for="live-wall">Wall</label>
+    <select id="live-wall"></select>
+    <label for="live-route">Route</label>
+    <select id="live-route"></select>
+    <details>
+      <summary class="muted" style="margin-top:12px">Settings for "New route"</summary>
+      <label for="live-train">Train (comma list: reach, traverse, jug, crimp, sloper, pinch, pocket)</label>
+      <input id="live-train" placeholder="e.g. sloper">
+      <div class="row">
+        <div><label for="live-level">Level</label>
+          <select id="live-level"><option>easy</option><option selected>medium</option><option>hard</option></select></div>
+        <div><label for="live-moves">Holds</label><input id="live-moves" type="number" value="6" min="3" max="12"></div>
+        <div><label for="live-height">Your height, cm</label><input id="live-height" type="number" value="172"></div>
+      </div>
+    </details>
+    <p><button id="live-start" class="primary wide">Start camera</button></p>
+    <div id="live-error" class="error"></div>
+    <p class="muted">Hold the phone sideways to fit the whole wall. Rings only appear while the wall is matched;
+      otherwise the screen says which way to move - it never guesses.</p>
   </div>
-</div>
+  <div id="live-cam" class="cam hidden">
+    <video id="live-video" playsinline muted autoplay></video>
+    <canvas id="live-canvas"></canvas>
+    <div class="hud">
+      <div id="live-state" class="state warn">Starting...</div>
+      <div id="live-detail" class="detail"></div>
+    </div>
+    <div class="bar">
+      <button id="live-new">New route</button>
+      <button id="live-next">Next route</button>
+      <button id="live-stop">Stop</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Scan a wall -->
+<section id="view-scan" class="view">
+  <div class="page">
+    <section id="scan-s-photo">
+      <h1>Scan a wall</h1>
+      <p class="muted">Once per wall, and again after a reset. Stand back so the whole climbing area is in the photo.</p>
+      <label for="scan-name">Wall name (letters, digits, - and _)</label>
+      <input id="scan-name" value="panel" autocapitalize="off" autocomplete="off">
+      <div id="scan-exists" class="muted"></div>
+      <label class="check"><input id="scan-markers" type="checkbox"> Use the printed markers for the corners</label>
+      <div class="row" style="margin-top:12px">
+        <button id="scan-open" class="primary">Take photo</button>
+        <button id="scan-choose">Choose a photo</button>
+      </div>
+      <input id="scan-file" type="file" accept="image/*" class="hidden">
+    </section>
+
+    <div id="scan-status" class="status hidden"></div>
+    <canvas id="scan-view" class="hidden"></canvas>
+
+    <section id="scan-s-corners" class="sticky hidden">
+      <div id="scan-corner-msg"></div>
+      <div class="row"><button id="scan-corner-undo">Undo</button><button id="scan-retake">New photo</button>
+        <button id="scan-corner-next" class="primary" disabled>Next</button></div>
+    </section>
+
+    <section id="scan-s-size" class="hidden">
+      <p>Measure the climbing area once with a tape. The size lets the app keep every move within reach.</p>
+      <div class="row">
+        <div><label for="scan-w">Width, top-left to top-right (cm)</label><input id="scan-w" type="number" inputmode="decimal" placeholder="skip"></div>
+        <div><label for="scan-h">Height, top-left to bottom-left (cm)</label><input id="scan-h" type="number" inputmode="decimal"></div>
+      </div>
+      <p class="muted">Leave the width empty to skip: then 300 cm is assumed and reach checks are approximate.</p>
+      <div class="row"><button id="scan-size-back">Back</button><button id="scan-size-next" class="primary">Next: tap the holds</button></div>
+    </section>
+
+    <section id="scan-s-holds" class="sticky hidden">
+      <div id="scan-hold-msg"></div>
+      <div class="types" id="scan-types"></div>
+      <div class="row"><button id="scan-hold-undo">Undo</button><button id="scan-save" class="primary" disabled>Save wall</button></div>
+    </section>
+
+    <section id="scan-s-done" class="hidden">
+      <h1 id="scan-done-title"></h1>
+      <p id="scan-done-text"></p>
+      <div class="row"><button id="scan-to-live" class="primary">See routes on it</button>
+        <button id="scan-again">Scan another wall</button></div>
+    </section>
+    <div id="scan-error" class="error"></div>
+  </div>
+  <!-- the camera for the scan photo: inside the page, no switch to the camera app -->
+  <div id="scan-cam" class="cam hidden">
+    <video id="scan-video" playsinline muted autoplay></video>
+    <div class="hud"><div class="state">Fit the whole wall in the frame</div>
+      <div id="scan-cam-hint" class="detail">Hold steady, then take the photo.</div></div>
+    <div class="bar">
+      <button id="scan-cancel">Cancel</button>
+      <button id="scan-shutter" class="primary">Take photo</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Record my try -->
+<section id="view-track" class="view">
+  <div id="track-setup" class="page">
+    <h1>Record my try</h1>
+    <label for="track-wall">Wall</label>
+    <select id="track-wall"></select>
+    <label for="track-route">Route</label>
+    <select id="track-route"></select>
+    <label for="track-climber">Your name, to save it in your logbook (optional)</label>
+    <input id="track-climber" autocapitalize="off" autocomplete="off" placeholder="e.g. lena">
+    <p class="muted">Put the phone 3-4 m back with the whole wall in view - never on the landing zone.
+      A high beep for each hold in order, a low buzz for a hold not on the route, a double beep for
+      out of order, a tune at the top.</p>
+    <p class="card">Body tracking uses an AI model (MediaPipe Pose) on the laptop. No video is saved and nothing
+leaves the laptop. It only checks which holds your hands touch - it does not judge whether a movement is safe.
+Only film people who agreed to it.</p>
+    <p><button id="track-start" class="primary wide">Start camera and sound</button></p>
+    <div id="track-error" class="error"></div>
+    <div id="track-safety" class="card hidden"></div>
+  </div>
+  <div id="track-cam" class="cam hidden">
+    <video id="track-video" playsinline muted autoplay></video>
+    <canvas id="track-canvas"></canvas>
+    <div class="hud">
+      <div id="track-state" class="state warn">Starting...</div>
+      <div id="track-detail" class="detail"></div>
+      <div id="track-flash" class="flash"></div>
+    </div>
+    <div id="track-summary" class="summary hidden"></div>
+    <div class="bar">
+      <button id="track-sound">Sound on</button>
+      <button id="track-again">Try again</button>
+      <button id="track-finish" class="primary">Finish</button>
+      <button id="track-stop">Stop</button>
+    </div>
+  </div>
+</section>
+
+<div id="bug" class="bugbox hidden"></div>
+
 <script src="web/common.js"></script>
+<script src="web/live.js"></script>
+<script src="web/scan.js"></script>
+<script src="web/track.js"></script>
+<script>
+"use strict";
+// Tabs: #live, #scan, #track. The old addresses /live, /scan and /track open the same page on that tab.
+const TABS = ["live", "scan", "track"];
+let current = null;
+function openTab(name, params) {
+  if (!TABS.includes(name)) name = "live";
+  if (current && current !== name && Ascent.views[current].leave) Ascent.views[current].leave();
+  current = name;
+  TABS.forEach(t => {
+    document.getElementById("view-" + t).classList.toggle("hidden", t !== name);
+    document.querySelector(`[data-tab="${t}"]`).classList.toggle("on", t === name);
+  });
+  Ascent.views[name].enter(params || {});
+}
+Ascent.openTab = (name, params) => {
+  if (location.hash !== "#" + name) history.replaceState(null, "", location.pathname + location.search + "#" + name);
+  openTab(name, params);
+};
+window.addEventListener("hashchange", () => openTab(location.hash.slice(1)));
+openTab(location.hash.slice(1) || location.pathname.replace(/^\//, "") || "live");
+</script>
 </body>
 </html>

@@ -16,9 +16,10 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Safety card and route filters** (`safety`, `routes`, 6 Nov): a 7-line card in English or German, shown once per climber and wall; the boulder list filtered by skill, grade, holds, made by, setter, not yet sent, within reach, with "N climbed".
 - **Challenges** (`challenge`, 6 Nov): invite someone on the same laptop to a route; done when they send it or give it a real try; both get a milestone and points; no deadline; minors can't be sent routes past their reach. Sending between phones needs the server.
 - **Phone as camera, live** (`serve` + `/live`, 6 Nov): local HTTPS server, the phone streams frames, the laptop tracks and answers with ring positions. Tested headlessly with synthetic frames and in headless Chromium with a fake camera; **not yet on a real phone.**
+- **One phone page, three tabs** (6 Nov, after the first try on a phone): `serve` prints one link. The scan photo is now taken inside the page (the first version opened the phone's camera app and then got stuck after the photo on a real phone; not reproducible in Chromium, so the camera-app step was removed). Errors on the phone are printed in the laptop terminal.
 - **Phone scan** (`/scan`, 6 Nov): photo, 4 corners or markers, size, holds and types on the phone, saved through the same `save_scan` as the CLI. Tested headlessly and in headless Chromium; not yet on a real phone.
 - **Phone track** (`/track`, 6 Nov): record my try from the phone; MediaPipe on the laptop, sounds on the phone with Web Audio, the result into the logbook. Tested headlessly with a scripted hand and in headless Chromium with the real model (no person in the test video); **not yet with a real climber.**
-- **Tests:** selftest and the rehearsal (114 checks, 115 with MediaPipe), all passing.
+- **Tests:** selftest and the rehearsal (115 checks, 116 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested

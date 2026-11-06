@@ -2240,7 +2240,7 @@ def make_handler(code, sessions):
     from http.server import BaseHTTPRequestHandler
     from urllib.parse import parse_qs, urlparse
     lock = threading.Lock()
-    pages = {"/": "index.html", "/live": "live.html", "/scan": "scan.html", "/track": "track.html"}
+    pages = {"/": "index.html", "/live": "index.html", "/scan": "index.html", "/track": "index.html"}  # one page, tabs
     types = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
              ".css": "text/css; charset=utf-8"}
 
@@ -2375,6 +2375,13 @@ def make_handler(code, sessions):
                 with s.lock:
                     s.new_route() if path.endswith("new") else s.next_route()
                     return s.info()
+            if path == "/api/log":
+                req = json.loads(self.body() or b"{}")
+                msg = str(req.get("message", ""))[:500].encode("ascii", "backslashreplace").decode()
+                where = str(req.get("page", ""))[:20].encode("ascii", "backslashreplace").decode()
+                agent = str(req.get("agent", ""))[:120].encode("ascii", "backslashreplace").decode()
+                print(f"Phone error ({where or 'page'}): {msg}\n   phone: {agent}")
+                return {"ok": True}
             if path == "/api/scan/markers":
                 photo = decode_photo(json.loads(self.body())["image"])
                 found = aruco_detect(cv2.cvtColor(photo, cv2.COLOR_BGR2GRAY))
@@ -2423,10 +2430,9 @@ def cmd_serve(args):
     if not ips:
         print("No network found. Join a Wi-Fi or the phone's hotspot, then start serve again.")
     for ip in ips:
-        base = f"https://{ip}:{args.port}"
-        print(f"  See a route:    {base}/live?code={code}")
-        print(f"  Scan a wall:    {base}/scan?code={code}")
-        print(f"  Record my try:  {base}/track?code={code}")
+        print(f"  Open on the phone:  https://{ip}:{args.port}/?code={code}")
+    print("One page with three tabs: See a route, Scan a wall, Record my try.")
+    print("Errors on the phone are also printed here - paste them to whoever fixes it.")
     print("The phone warns about the certificate the first time - see START_HERE.md. Ctrl+C = stop.")
     try:
         httpd.serve_forever()
