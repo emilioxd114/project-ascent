@@ -933,8 +933,16 @@ PHONE_SKILLS = {"reach": (["reach"], "medium"), "traverse": (["traverse"], "medi
 def height_for_wall(wall):
     """A climber height scaled to the wall, for when nobody typed a size or a height: 0.55 x the wall's
     width, so the reach is about 0.3 x the width - a person on a 300 cm panel, a puppet on a 60 cm prop
-    wall, and the same proportions when the width was only assumed."""
-    return round(0.55 * float(wall["size_cm"]["w"]), 1)
+    wall. When the size was only assumed, the height is raised until the reach covers the usual step to
+    the second-nearest hold (x 1.15): on the first real prop wall (tall and narrow, holds a third of the
+    width apart) the width-scaled reach was just short of every move and no route fit. The route still
+    carries the 'size not measured' warning."""
+    height = 0.55 * float(wall["size_cm"]["w"])
+    if wall["size_cm"].get("assumed") and len(wall["holds"]) >= 3:
+        pos = np.array([h["cm"] for h in wall["holds"]], dtype=float)
+        step = np.sort(np.linalg.norm(pos[:, None] - pos[None], axis=2), axis=1)[:, 2]   # 2nd-nearest neighbour
+        height = max(height, 1.15 * float(np.median(step)) / REACH_FACTOR)
+    return round(height, 1)
 
 
 def phone_make_route(req):
@@ -962,19 +970,39 @@ def phone_make_route(req):
             "short": len(ids) < moves, "w": ref.shape[1], "h": ref.shape[0]}
 
 
-def phone_save_route(req):
-    """'Use this route': saves the previewed route under the next name (r1, r2, ...)."""
-    wall, _ = load_wall(safe_name(req.get("wall") or ""))
+def phone_route_ids(wall, req):
     known = {h["id"] for h in wall["holds"]}
     ids = [int(i) for i in req.get("holds") or []]
     if len(ids) < 2 or len(set(ids)) != len(ids) or any(i not in known for i in ids):
         raise ValueError("The route must name 2 or more different holds of this wall.")
+    return ids
+
+
+def phone_check_route(req):
+    """A route built or edited by hand on the phone (holds tapped in climbing order): its grade and warnings,
+    the same rules as 'build'. Nothing is saved; that is /api/route/save with how 'built'."""
+    wall, ref = load_wall(safe_name(req.get("wall") or ""))
+    ids = phone_route_ids(wall, req)
+    height = float(req["height"]) if req.get("height") else height_for_wall(wall)
+    route = route_record(wall, ids, "preview", "built", height)
+    px = {h["id"]: h["px"] for h in wall["holds"]}
+    return {"holds": ids, "holds_px": [px[i] for i in ids], "grade": route["estimated_grade"],
+            "warnings": route["warnings"], "height": height, "w": ref.shape[1], "h": ref.shape[0]}
+
+
+def phone_save_route(req):
+    """'Use this route': saves the previewed route under the next name (r1, r2, ...). how: 'generated' (made
+    for a skill, keeps the skill as its train tag) or 'built' (tapped or edited by hand, like the CLI's build)."""
+    wall, _ = load_wall(safe_name(req.get("wall") or ""))
+    ids = phone_route_ids(wall, req)
     skill = req.get("skill") if req.get("skill") in PHONE_SKILLS else "medium"
+    how = "built" if req.get("how") == "built" else "generated"
     height = float(req["height"]) if req.get("height") else height_for_wall(wall)
     name = next_route_name(wall["name"])
-    route = save_route(wall, ids, name, "generated", height, PHONE_SKILLS[skill][0], req.get("by") or None)
+    train = PHONE_SKILLS[skill][0] if how == "generated" else []
+    route = save_route(wall, ids, name, how, height, train, req.get("by") or None)
     return {"route": name, "grade": route["estimated_grade"], "holds": len(ids), "warnings": route["warnings"],
-            "train": route["train"]}
+            "train": route["train"], "made_by": how}
 
 
 def route_names(wall_name):
@@ -1940,6 +1968,10 @@ def cmd_challenge(args):
 POSE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
                   "pose_landmarker_lite/float16/latest/pose_landmarker_lite.task")
 POSE_MODEL_PATH = os.path.join("models", "pose_landmarker_lite.task")
+HAND_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+                  "hand_landmarker/float16/latest/hand_landmarker.task")
+HAND_MODEL_PATH = os.path.join("models", "hand_landmarker.task")
+FINGERTIPS = (8, 12)   # MediaPipe Hands: index and middle fingertip - the part of a hand that is on a hold
 HAND_JOINTS = {"left": (15, 17, 19), "right": (16, 18, 20)}   # MediaPipe Pose: wrist, pinky, index
 TOUCH_CM = 12.0      # at most this close to a hold's centre counts as on the hold (smaller on small walls)
 DWELL_S = 0.5        # ... and it must stay that long, so a hand passing by doesn't count
@@ -1970,17 +2002,7 @@ class PoseDetector:
             return
         from mediapipe.tasks.python import vision
         from mediapipe.tasks.python.core.base_options import BaseOptions
-        path = model_path or POSE_MODEL_PATH
-        if not os.path.exists(path):
-            print(f"Downloading the pose model once (5.5 MB) to {path} ...")
-            try:
-                import urllib.request
-                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-                urllib.request.urlretrieve(POSE_MODEL_URL, path + ".part")
-                os.replace(path + ".part", path)
-            except Exception as e:
-                sys.exit(f"Could not download the pose model ({e}).\nDownload it by hand from\n  {POSE_MODEL_URL}\n"
-                         f"save it as {path}, or pass --pose-model FILE.")
+        path = fetch_model(model_path or POSE_MODEL_PATH, POSE_MODEL_URL, "pose (5.5 MB)", "--pose-model")
         opts = vision.PoseLandmarkerOptions(base_options=BaseOptions(model_asset_path=path),
                                             running_mode=vision.RunningMode.VIDEO, num_poses=1)
         self.tasks = vision.PoseLandmarker.create_from_options(opts)
@@ -2010,13 +2032,16 @@ class PoseDetector:
 
 def auto_touch_cm(wall):
     """How close counts as 'on the hold': 12 cm on a real wall, less where holds sit close together
-    (a small prop wall), so a touch can't land on two holds. 45% of the usual gap between neighbours."""
+    (a small prop wall), so a touch can't land on two holds. 45% of the usual gap between neighbours.
+    When the size was only assumed (300 cm wide), the cap is 8% of the width instead of 12 cm: 12 'cm' on
+    a 60 cm prop wall would be 2.4 real cm, and a fingertip on the edge of a hold would miss."""
     pos = np.array([h["cm"] for h in wall["holds"]], dtype=float)
+    cap = 0.08 * float(wall["size_cm"]["w"]) if wall["size_cm"].get("assumed") else TOUCH_CM
     if len(pos) < 2:
-        return TOUCH_CM
+        return min(TOUCH_CM, cap)
     d = np.linalg.norm(pos[:, None] - pos[None], axis=2)
     np.fill_diagonal(d, np.inf)
-    return float(np.clip(0.45 * np.median(d.min(axis=1)), 2.0, TOUCH_CM))
+    return float(np.clip(0.45 * np.median(d.min(axis=1)), 2.0, cap))
 
 
 class StickerDetector:
@@ -2237,6 +2262,71 @@ def make_pose_detector(model_path=None):
     return PoseDetector(model_path)
 
 
+def fetch_model(path, url, what, flag):
+    """A MediaPipe model file, downloaded once (the laptop needs internet that one time)."""
+    if os.path.exists(path):
+        return path
+    print(f"Downloading the {what} model once to {path} ...")
+    try:
+        import urllib.request
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        urllib.request.urlretrieve(url, path + ".part")
+        os.replace(path + ".part", path)
+    except Exception as e:
+        sys.exit(f"Could not download the {what} model ({e}).\nDownload it by hand from\n  {url}\n"
+                 f"save it as {path}, or pass {flag} FILE.")
+    return path
+
+
+def mediapipe_available():
+    import importlib.util
+    return importlib.util.find_spec("mediapipe") is not None
+
+
+class HandDetector:
+    """MediaPipe Hands, run on this laptop: up to two hands, each given by its index and middle fingertips
+    in frame pixels - the part that is on the hold. Same interface as PoseDetector: hands(frame, t) ->
+    {"Right": (x, y), "Left": (x, y)}. Used when a person climbs without a sticker. On the first real
+    photo (only the arm in view) the pose model put the wrist 20 cm off; the hand model found the
+    fingertip. No video is saved and nothing leaves the laptop; it only says where the hands are."""
+
+    def __init__(self, model_path=None):
+        try:
+            import mediapipe as mp
+            from mediapipe.tasks.python import vision
+            from mediapipe.tasks.python.core.base_options import BaseOptions
+        except ImportError:
+            sys.exit("Hand tracking needs MediaPipe: pip install mediapipe   (or use a sticker: --touch sticker)")
+        self.mp, self.last_ms = mp, -1
+        path = fetch_model(model_path or HAND_MODEL_PATH, HAND_MODEL_URL, "hand (7.8 MB)", "--hand-model")
+        opts = vision.HandLandmarkerOptions(base_options=BaseOptions(model_asset_path=path),
+                                            running_mode=vision.RunningMode.VIDEO, num_hands=2,
+                                            min_hand_detection_confidence=0.3, min_tracking_confidence=0.3)
+        self.tasks = vision.HandLandmarker.create_from_options(opts)
+
+    def hands(self, frame, t):
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w = frame.shape[:2]
+        ms = max(int(t * 1000), self.last_ms + 1)          # timestamps must always increase
+        self.last_ms = ms
+        res = self.tasks.detect_for_video(self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb), ms)
+        out = {}
+        for lms, side in zip(res.hand_landmarks, res.handedness):
+            name = side[0].category_name if side else "hand"
+            if name in out:
+                name += "2"
+            tips = [lms[j] for j in FINGERTIPS]
+            out[name] = (float(np.mean([p.x for p in tips])) * w, float(np.mean([p.y for p in tips])) * h)
+        return out
+
+    def close(self):
+        self.tasks.close()
+
+
+def make_hand_detector(model_path=None):
+    return HandDetector(model_path)
+
+
 def run_track(args):
     """Runs one tracked attempt and returns its summary."""
     wall, ref = load_wall(args.wall)
@@ -2255,6 +2345,11 @@ def run_track(args):
         detector.prepare(wall, ref)
         print(f"Touch tracking by sticker colour ({detector.name}), no AI. Click the sticker in the window to")
         print("teach it the exact colour. No video is saved. It only checks which holds the stickers touch.")
+    elif mode == "hands":
+        print("Hand tracking uses an AI model (MediaPipe Hands) on this laptop. No video is saved and nothing")
+        print("leaves the device. It only checks which holds your fingers are on - it does not judge whether a")
+        print("movement is safe. Only film people who agreed to it.")
+        detector = make_hand_detector(getattr(args, "hand_model", None))
     else:
         print("Body tracking uses an AI model (MediaPipe Pose) on this laptop. No video is saved and nothing")
         print("leaves the device. It only checks which holds your hands touch - it does not judge whether a")
@@ -2518,19 +2613,23 @@ class TrackSession(PhoneSession):
     """Record my try from the phone: the same AttemptWatcher and MediaPipe hands as 'track', on the laptop.
     Hands only count while the wall is locked; the phone plays the sounds."""
 
-    def __init__(self, wall_name, route_name, climber=None, touch_cm=TOUCH_CM, touch="pose", sticker="green"):
+    def __init__(self, wall_name, route_name, climber=None, touch_cm=None, touch="pose", sticker="green"):
         if not route_name:
             raise ValueError("Choose a route to record.")
         super().__init__(wall_name, route_name)
         self.climber = climber_id(climber) if climber else None
-        self.touch_cm = float(touch_cm)
+        self.touch_cm = float(touch_cm) if touch_cm else None       # None: from the wall's hold spacing
         self.R = rectify_matrix(self.wall["corners_px"], self.wall["size_cm"]["w"], self.wall["size_cm"]["h"])
+        if touch == "auto":                          # the Climb tab: hands when the laptop has MediaPipe
+            touch = "hands" if mediapipe_available() else "sticker"
         self.touch = touch
         if touch == "sticker":                       # a coloured sticker on the fingertip, no AI, no MediaPipe
             if sticker not in STICKER_COLOURS:
                 raise ValueError(f"Sticker colours: {', '.join(STICKER_COLOURS)}.")
             self.detector = make_sticker_detector(sticker)
             self.detector.prepare(self.wall, self.ref)
+        elif touch == "hands":                       # a person without a sticker: MediaPipe hand landmarks
+            self.detector = make_hand_detector()
         else:
             self.detector = make_pose_detector()
         self.reset()
@@ -2791,6 +2890,18 @@ def make_handler(code, sessions):
                     return self.send(200, f.read(), types[os.path.splitext(fname)[1]], cookie=True)
             if u.path == "/api/walls":
                 return self.send(200, {"walls": walls_overview()})
+            if u.path == "/api/wall/holds":                 # corners and holds, to fix them or build a route
+                try:
+                    wall, ref = load_wall(safe_name((q.get("wall") or [""])[0]))
+                except ValueError as e:
+                    return self.send(400, {"error": str(e)})
+                except SystemExit:
+                    return self.send(404, {"error": "No such wall."})
+                return self.send(200, {
+                    "wall": wall["name"], "version": wall["version"], "mode": wall["mode"],
+                    "corners": wall["corners_px"], "size_cm": wall["size_cm"], "w": ref.shape[1], "h": ref.shape[0],
+                    "holds": [{"id": h["id"], "px": h["px"], "type": h.get("type"), "colour": h.get("colour")}
+                              for h in wall["holds"]]})
             if u.path == "/api/wall/photo":                 # the saved photo, to draw a route on it
                 try:
                     p = wall_path(safe_name((q.get("wall") or [""])[0]), "ref.jpg")
@@ -2832,14 +2943,15 @@ def make_handler(code, sessions):
                 return {"sid": add_session(s), **s.info()}
             if path == "/api/track/start":
                 req = json.loads(self.body() or b"{}")
+                touch = req.get("touch") if req.get("touch") in ("sticker", "hands", "pose", "auto") else "pose"
                 s = TrackSession(safe_name(req["wall"]), req.get("route") or None, req.get("climber") or None,
-                                 float(req.get("touch_cm") or TOUCH_CM),
-                                 "sticker" if req.get("touch") == "sticker" else "pose",
+                                 float(req["touch_cm"]) if req.get("touch_cm") else None, touch,
                                  str(req.get("sticker") or "green"))
                 sid = add_session(s)
                 card = safety_card_due(s.climber, s.wall["name"]) if s.climber else None
                 return {"sid": sid, **s.info(), "safety": card, "touch": s.touch,
-                        "route_holds": len(s.route["holds"]), "climber": s.climber}
+                        "touch_cm": round(s.watcher.touch_cm, 1), "route_holds": len(s.route["holds"]),
+                        "climber": s.climber}
             if path in ("/api/track/finish", "/api/track/reset"):
                 s = self.session(q)
                 if not isinstance(s, TrackSession):
@@ -2882,6 +2994,8 @@ def make_handler(code, sessions):
                 return phone_make_route(json.loads(self.body() or b"{}"))
             if path == "/api/route/save":
                 return phone_save_route(json.loads(self.body() or b"{}"))
+            if path == "/api/route/check":
+                return phone_check_route(json.loads(self.body() or b"{}"))
             if path == "/api/scan/auto":
                 return phone_find_wall(json.loads(self.body()))
             if path == "/api/scan":
@@ -3010,13 +3124,15 @@ def main():
     p.add_argument("--camera", type=int, default=0)
     p.add_argument("--video", help="use a video file instead of the webcam")
     p.add_argument("--features", choices=["sift", "orb"], default="sift")
-    p.add_argument("--touch", choices=["sticker", "pose"], default="sticker",
-                   help="sticker: coloured stickers on the hands, no AI (default); pose: MediaPipe body tracking")
+    p.add_argument("--touch", choices=["sticker", "hands", "pose"], default="sticker",
+                   help="sticker: coloured stickers on the hands, no AI (default); hands: MediaPipe hand "
+                        "tracking, fingertips, no sticker; pose: MediaPipe body tracking")
     p.add_argument("--sticker", choices=list(STICKER_COLOURS), default="green",
                    help="sticker colour to start with; click the sticker in the window to fine-tune")
     p.add_argument("--touch-cm", type=positive_cm, help="how close to a hold counts; default: from the hold spacing")
     p.add_argument("--dwell", type=positive_cm, default=DWELL_S, help="seconds on a hold to count as a touch")
     p.add_argument("--pose-model", help="MediaPipe pose model file (downloaded once if missing)")
+    p.add_argument("--hand-model", help="MediaPipe hand model file (downloaded once if missing)")
     p.add_argument("--mute", action="store_true", help="no sounds, messages only")
     p.add_argument("--climber", help="save the attempt in this climber's logbook")
 

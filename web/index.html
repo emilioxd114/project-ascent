@@ -33,7 +33,13 @@
         <input id="flow-name" value="wall" autocapitalize="off" autocomplete="off">
         <label for="flow-width">Wall width in cm (optional - leave empty)</label>
         <input id="flow-width" type="number" inputmode="decimal" placeholder="not needed">
-        <label for="flow-sticker">Sticker colour on the fingertip</label>
+        <label for="flow-touch">How touches are seen when you climb</label>
+        <select id="flow-touch">
+          <option value="auto">Automatic: hands if the laptop has MediaPipe, else a sticker</option>
+          <option value="hands">Hands, no sticker (MediaPipe on the laptop)</option>
+          <option value="sticker">A coloured sticker on the fingertip</option>
+        </select>
+        <label for="flow-sticker">Sticker colour, if you use one</label>
         <select id="flow-sticker"><option>green</option><option>pink</option><option>orange</option>
           <option>yellow</option><option>blue</option><option>red</option></select>
       </details>
@@ -62,16 +68,18 @@
       <div class="row">
         <button id="flow-make" class="primary">Make route</button>
         <button id="flow-another" class="hidden">Another one</button>
-        <button id="flow-keep" class="primary hidden">Use this route</button>
+        <button id="flow-build">Build my own</button>
       </div>
-      <div class="row"><button id="flow-route-back">Back</button></div>
+      <p><button id="flow-keep" class="primary wide hidden">Use this route</button></p>
+      <div class="row"><button id="flow-fix">Fix the holds</button><button id="flow-route-back">Back</button></div>
     </section>
 
     <section id="flow-s-climb" class="hidden">
       <h1 id="flow-climb-title">Route ready</h1>
       <p id="flow-climb-text"></p>
-      <p>Put the phone down 2-4 m back, the whole wall in view, never on the landing zone. Sticker on your
-        fingertip. Tap <b>Start</b>, then tap the sticker once on the screen so the phone learns its colour.</p>
+      <p>Put the phone down 2-4 m back, the whole wall in view, never on the landing zone. Tap <b>Start</b>.
+        The laptop then tracks your hands (MediaPipe) - or, without MediaPipe, a coloured sticker on your
+        fingertip: tap it once on the screen so the phone learns its colour. The screen says which.</p>
       <p class="muted">A high beep for the next hold, a low buzz for a hold not on the route, a tune at the top.
         Nothing counts while the wall is not matched. No video is saved.</p>
       <p><button id="flow-start" class="primary wide">Start</button></p>

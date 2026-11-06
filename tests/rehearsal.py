@@ -193,6 +193,14 @@ def rehearse_track(gui, photo, holds, corners):
         check("track: real MediaPipe runs and sees no hands on an empty frame", seen == {})
     else:
         print("[SKIP] real MediaPipe check (mediapipe or models/pose_landmarker_lite.task not installed)")
+    hand_model = os.path.join(ROOT, ascent.HAND_MODEL_PATH)
+    if have_mp and os.path.exists(hand_model):
+        det = ascent.HandDetector(hand_model)
+        seen = det.hands(np.zeros((480, 640, 3), np.uint8), 0.0)
+        det.close()
+        check("track: the real MediaPipe hand model runs and sees no hands on an empty frame", seen == {})
+    else:
+        print("[SKIP] real MediaPipe hand check (mediapipe or models/hand_landmarker.task not installed)")
 
 
 def rehearse_log():
@@ -846,13 +854,110 @@ def rehearse_serve_flow(photo, mphoto, holds, corners):
         st, _, _ = phone.post("/api/track/start", {"wall": "flow", "route": "r1", "touch": "sticker",
                                                    "sticker": "neon"})
         check("flow: an unknown sticker colour is refused", st == 400)
+
+        # the holds of a saved wall, for fixing them or tapping a route by hand on the phone
+        st, hw, _ = phone.request("GET", "/api/wall/holds?wall=flow")
+        st4, _, _ = phone.request("GET", "/api/wall/holds?wall=nothere")
+        check("flow: a saved wall's corners and holds can be fetched with their ids; unknown wall: 404",
+              st == 200 and len(hw["holds"]) == 26 and hw["holds"][0]["id"] == 1 and hw["w"] == 1280
+              and np.allclose(hw["corners"], wall["corners_px"]) and st4 == 404, f"{st} {st4}")
+        bottom_up = [h["id"] for h in sorted(wall["holds"], key=lambda h: h["cm"][1])]
+        ids = [bottom_up[0], bottom_up[len(bottom_up) // 2], bottom_up[-1]]
+        st, chk, _ = phone.post("/api/route/check", {"wall": "flow", "holds": ids})
+        check("flow: a route tapped by hand is checked - grade with ~, positions, nothing saved",
+              st == 200 and chk["holds"] == ids and chk["grade"].startswith("~") and len(chk["holds_px"]) == 3
+              and ascent.route_names("flow") == ["r1"], str(chk)[:120])
+        st, chk2, _ = phone.post("/api/route/check", {"wall": "flow", "holds": [ids[0], ids[-1]]})
+        check("flow: ... a move past the reach is warned about",
+              st == 200 and any("past your reach" in w for w in chk2["warnings"]), str(chk2["warnings"]))
+        st, _, _ = phone.post("/api/route/check", {"wall": "flow", "holds": [ids[0]]})
+        st2, _, _ = phone.post("/api/route/check", {"wall": "flow", "holds": [ids[0], 999]})
+        check("flow: one hold, or an unknown hold, is refused", st == 400 and st2 == 400)
+        st, sv, _ = phone.post("/api/route/save", {"wall": "flow", "holds": ids, "skill": "reach", "how": "built"})
+        r2 = ascent.load_route("flow", sv["route"])
+        check("flow: 'Use this route' on a hand-built route saves it as built, without a skill tag",
+              st == 200 and sv["made_by"] == "built" and r2["made_by"] == "built" and r2["train"] == []
+              and r2["holds"] == ids, str(sv))
+
+        # a person without a sticker: the laptop's MediaPipe hand model (faked here) gives the fingertips
+        class FakeHands:
+            pos = None
+
+            def hands(self, frame, t):
+                return {"Right": FakeHands.pos} if FakeHands.pos is not None else {}
+
+            def close(self):
+                pass
+
+        real_hands, real_avail = ascent.make_hand_detector, ascent.mediapipe_available
+        try:
+            ascent.make_hand_detector = lambda path=None: FakeHands()
+            ascent.mediapipe_available = lambda: False
+            st, info, _ = phone.post("/api/track/start", {"wall": "flow", "route": "r1", "touch": "auto"})
+            check("flow: 'automatic' touch is the sticker when the laptop has no MediaPipe",
+                  st == 200 and info["touch"] == "sticker", str(info))
+            ascent.mediapipe_available = lambda: True
+            st, info, _ = phone.post("/api/track/start", {"wall": "flow", "route": "r1", "touch": "auto"})
+            check("flow: ... and hands when it has; the touch radius comes from the hold spacing, not a fixed 12",
+                  st == 200 and info["touch"] == "hands" and info["touch_cm"] == round(ascent.auto_touch_cm(wall), 1)
+                  and info["touch_cm"] != 12.0, str(info))
+            sid = info["sid"]
+            events.clear()
+            t = 0.0
+
+            def sendh(i, hold):
+                nonlocal t
+                img, Hf = phone_view(photo, Hs[i])
+                FakeHands.pos = tuple(ascent.transform(Hf, [px[hold]])[0] + [2, -1]) if hold else None
+                st, a, _ = phone.frame(sid, img, f"&t={t:.3f}")
+                t += 1 / 8
+                events.extend(e["sound"] for e in a.get("events", []))
+                return a
+
+            for i, hold in enumerate([None] * 2 + [h for h in route for _ in range(6)]):
+                a = sendh(i, hold)
+            check("flow: fingertips on the holds in order give good ... top, and the hand is shown",
+                  events == ["good"] * (len(route) - 1) + ["top"] and a.get("hands"), str(events))
+            ascent.make_hand_detector = lambda path=None: ascent.sys.exit("Hand tracking needs MediaPipe: pip install mediapipe")
+            st, r, _ = phone.post("/api/track/start", {"wall": "flow", "route": "r1", "touch": "hands"})
+            check("flow: hands without MediaPipe: a clear message, server stays up",
+                  st == 400 and "MediaPipe" in r["error"], str(r))
+        finally:
+            ascent.make_hand_detector, ascent.mediapipe_available = real_hands, real_avail
         st, js, _ = phone.request("GET", "/web/flow.js", code=False)
         st2, page, _ = phone.request("GET", "/")
         check("flow: the Climb tab is on the one page", st == 200 and b"/api/scan/auto" in js
               and b"/api/route/make" in js and b'data-tab="climb"' in page and b"web/flow.js" in page)
+        check("flow: the page can build and edit routes, fix holds and track hands", b"/api/route/check" in js
+              and b"/api/wall/holds" in js and b'id="flow-build"' in page and b'id="flow-fix"' in page
+              and b'id="flow-touch"' in page and b"/api/scan" in js)
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def rehearse_unmeasured_wall():
+    """The first real prop wall (6 Nov, photographed on the phone, size never measured): tall and narrow, 11 holds
+    about a third of the width apart. With the reach scaled from the assumed width alone, no move fit ('3 holds,
+    that is all that fits'); and a touch radius of 12 'cm' was 2.4 real cm. Only the numbers from that photo."""
+    corners = [[433, 3], [808, 3], [772, 532], [447, 521]]
+    px = [[562, 79], [701, 89], [490, 182], [623, 191], [758, 197], [553, 280], [683, 298], [610, 384],
+          [740, 398], [547, 474], [670, 484]]
+    blank = np.full((540, 900, 3), 200, np.uint8)
+    hs = lambda: [{"px": p, "type": None} for p in px]
+    wall = ascent.save_scan("realprop", blank, corners, 300.0, 414.0, True, hs())
+    h = ascent.height_for_wall(wall)
+    check("unmeasured wall: the reach covers the usual step between neighbouring holds",
+          0.55 * h > 95 and h < 260, f"height {h}")
+    made = {s: ascent.generate_route(wall, 5, h, *ascent.PHONE_SKILLS[s], seed=1) for s in ("reach", "easy", "hard")}
+    check("unmeasured wall: reach, easy and hard routes of 5 holds fit, every move going up",
+          all(r and len(r) == 5 for r in made.values()), str(made))
+    tc = ascent.auto_touch_cm(wall)
+    check("unmeasured wall: a touch counts within a fingertip of the hold, not 2 real cm", 20 <= tc <= 30, str(tc))
+    measured = ascent.save_scan("realprop2", blank, corners, 60.0, 83.0, False, hs())
+    check("measured wall: unchanged - height 0.55 x width, touch radius at most 12 cm",
+          ascent.height_for_wall(measured) == 33.0 and 2.0 <= ascent.auto_touch_cm(measured) <= 12.0,
+          f"{ascent.height_for_wall(measured)} {ascent.auto_touch_cm(measured)}")
 
 
 def rehearse_sticker(photo, mphoto, holds, corners):
@@ -1204,6 +1309,7 @@ def main():
         rehearse_sticker(photo, mphoto, holds, corners)
         rehearse_auto_scan(gui)
         rehearse_serve_flow(photo, mphoto, holds, corners)
+        rehearse_unmeasured_wall()
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

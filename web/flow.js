@@ -1,7 +1,7 @@
 // "Climb": the whole flow on the phone, nothing typed, nothing measured.
 //   photo -> the laptop finds the wall and the holds -> "Looks good" -> a route for a skill, drawn on the
-//   photo -> "Use this route" -> phone down, live rings, sticker on the fingertip, sounds.
-// The laptop does the vision work (the same code as scan --auto, generate and track --touch sticker).
+//   photo (or tapped in by hand, or edited) -> "Use this route" -> phone down, live rings, sounds.
+// The laptop does the vision work (the same code as scan --auto, generate, build and track).
 "use strict";
 (() => {
   const $ = id => document.getElementById("flow-" + id);
@@ -12,9 +12,11 @@
   // the scan
   let photo = null, dataUrl = null, found = null, corners = [], holds = [], taps = [], how = null;
   // the wall and the route
-  let wallName = null, wallPhoto = null, route = null, skill = "reach", savedRoute = null;
+  let wallName = null, wallPhoto = null, wallHolds = [], route = null, routeHow = "generated", skill = "reach";
+  let savedRoute = null;
   // climbing
-  let sid = null, running = false, lastAnswerAt = 0, wake = null, t0 = 0, tap = null, flashUntil = 0, learned = false;
+  let sid = null, running = false, lastAnswerAt = 0, wake = null, t0 = 0, tap = null, flashUntil = 0;
+  let learned = false, touch = "sticker";
 
   function show(id) {
     ["s-start", "s-holds", "s-route", "s-climb"].forEach(s => $(s).classList.toggle("hidden", s !== id));
@@ -23,6 +25,7 @@
   function status(text) { $("status").textContent = text || ""; $("status").classList.toggle("hidden", !text); }
   function fail(msg) { status(""); $("error").textContent = msg; }
   function clearError() { $("error").textContent = ""; }
+  const holdById = id => wallHolds.find(h => h.id === id);
 
   // ------------------------------------------------------------------ drawing on the photo
   function drawPhoto(img) {
@@ -56,13 +59,18 @@
         ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(String(i + 1), x, y);
       });
     }
-    holds.forEach(h => holdRing(h.px[0], h.px[1], 11 * k, k, Ascent.COLORS.white, ""));
+    holds.forEach(h => holdRing(h.px[0], h.px[1], 12 * k, k, Ascent.COLORS.white, ""));
   }
   function drawRoute() {
     if (!wallPhoto || !view.clientWidth) return;
     drawPhoto(wallPhoto);
-    if (!route) return;
-    const k = view.width / view.clientWidth, pts = route.holds_px, n = pts.length;
+    const k = view.width / view.clientWidth;
+    const on = new Set(route ? route.holds : []);
+    ctx.globalAlpha = 0.55;                                 // every hold of the wall, faint: tap one to add it
+    wallHolds.forEach(h => { if (!on.has(h.id)) holdRing(h.px[0], h.px[1], 9 * k, 0.7 * k, Ascent.COLORS.white, ""); });
+    ctx.globalAlpha = 1;
+    if (!route || !route.holds.length) return;
+    const pts = route.holds_px, n = pts.length;
     ctx.globalAlpha = 0.5; ctx.lineWidth = 2.5 * k; ctx.strokeStyle = Ascent.COLORS.white;
     ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
     ctx.globalAlpha = 1;
@@ -128,13 +136,15 @@
     const msg = $("holds-msg");
     if (corners.length !== 4) {
       msg.textContent = (found && found.message ? found.message + " " : "") +
-        (taps.length < 4 ? `Tap the ${NAMES[taps.length]} corner.` : "");
+        (taps.length < 4 ? `Tap the ${NAMES[taps.length]} corner of the board.` : "");
       $("holds-ok").disabled = true;
       $("holds-undo").disabled = !taps.length;
     } else {
-      const by = { markers: "the printed markers", outline: "the board's outline", taps: "your taps" }[how] || "";
-      msg.textContent = `Wall found from ${by}, ${holds.length} holds found.` +
-        (holds.length ? " Looks good? Or fix it: tap a ring to remove it, tap a missed hold to add it."
+      const by = { markers: "the printed markers", outline: "the board's outline", taps: "your taps" }[how];
+      msg.textContent = (found ? `Wall found from ${by}, ${holds.length} holds found.`
+                               : `Wall '${wallName}' as saved, ${holds.length} holds.`) +
+        (holds.length ? " Every hold should have a white ring. Fix it: tap a ring to remove it, tap a missed" +
+                        " hold to add it. Then Looks good."
                       : " Tap each hold, or take a new photo in better light.");
       $("holds-ok").disabled = !holds.length;
       $("holds-undo").disabled = !holds.length;
@@ -144,14 +154,15 @@
   view.addEventListener("click", e => {
     const r = view.getBoundingClientRect();
     const x = (e.clientX - r.left) * view.width / r.width, y = (e.clientY - r.top) * view.height / r.height;
-    if (step !== "holds") return;
     const k = view.width / view.clientWidth;
+    if (step === "route") return routeTap(x, y, k);
+    if (step !== "holds") return;
     if (corners.length !== 4) {                              // the last fallback: 4 corner taps
       taps.push([x, y]);
       if (taps.length === 4) findWall(taps); else holdStep();
       return;
     }
-    const near = holds.findIndex(h => Math.hypot(h.px[0] - x, h.px[1] - y) < 14 * k);
+    const near = holds.findIndex(h => Math.hypot(h.px[0] - x, h.px[1] - y) < 22 * k);   // a fingertip is wide
     if (near >= 0) holds.splice(near, 1); else holds.push({ px: [x, y], type: null });
     holdStep();
   });
@@ -159,7 +170,7 @@
   $("retake").onclick = () => { photo = null; clearError(); $("new").onclick(); };
 
   $("holds-ok").onclick = async () => {
-    const name = ($("name").value.trim() || "wall");
+    const name = found ? ($("name").value.trim() || "wall") : wallName;   // a fixed wall keeps its name
     $("holds-ok").disabled = true;
     status("Saving the wall on the laptop...");
     try {
@@ -167,13 +178,17 @@
         wall: name, image: dataUrl, markers: how === "markers", corners: how === "markers" ? [] : corners,
         width: parseFloat($("width").value) || null, height: null,
         holds: holds.map(h => ({ px: h.px, type: h.type || null, colour: h.colour || null })) });
-      status("");
       wallName = r.wall; wallPhoto = photo;
+      await loadWallHolds();
+      status("");
       routeStep(`Wall '${r.wall}' saved (version ${r.version}, ${r.holds} holds). Pick what you want to train.`);
     } catch (e) { fail(e.message); $("holds-ok").disabled = false; }
   };
+  async function loadWallHolds() {
+    wallHolds = (await Ascent.getJSON("/api/wall/holds?wall=" + encodeURIComponent(wallName))).holds;
+  }
 
-  // ------------------------------------------------------------------ 3. a route for a skill
+  // ------------------------------------------------------------------ 3. a route: for a skill, or by hand
   async function useExistingWall(name) {
     clearError();
     status("Loading the wall's photo...");
@@ -183,23 +198,36 @@
       const img = await createImageBitmap(await res.blob());
       view.width = img.width; view.height = img.height;
       wallName = name; wallPhoto = img;
+      await loadWallHolds();
       status("");
-      routeStep("Pick what you want to train.");
+      routeStep("Pick what you want to train, or build your own route.");
     } catch (e) { fail(e.message); }
   }
   function routeStep(msg) {
     step = "route"; show("s-route");
-    route = null; savedRoute = null;
+    route = null; savedRoute = null; routeHow = "generated";
     $("route-msg").textContent = msg;
-    $("make").classList.remove("hidden"); $("another").classList.add("hidden"); $("keep").classList.add("hidden");
+    routeButtons();
     drawRoute();
     view.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+  function routeButtons() {
+    const made = route && routeHow === "generated";
+    $("make").classList.toggle("hidden", !!made);
+    $("another").classList.toggle("hidden", !made);
+    $("keep").classList.toggle("hidden", !(route && route.holds.length >= 2));
+  }
+  function routeMsg(text) {
+    const warn = route ? route.warnings.filter(w => !/not measured/.test(w)) : [];
+    $("route-msg").textContent = text + (warn.length ? " ! " + warn[0] : "") +
+      " Tap a ring to take that hold out, tap another hold to add it.";
+    routeButtons();
   }
   document.querySelectorAll("#flow-skills button").forEach(b => {
     b.onclick = () => {
       skill = b.dataset.skill;
       document.querySelectorAll("#flow-skills button").forEach(x => x.classList.toggle("on", x === b));
-      if (route) makeRoute();
+      if (route && routeHow === "generated") makeRoute();
     };
   });
   async function makeRoute() {
@@ -208,30 +236,78 @@
     status("Making a " + skill + " route...");
     try {
       route = await Ascent.api("/api/route/make", { wall: wallName, skill });
+      routeHow = "generated";
       status("");
-      $("route-msg").textContent = `${route.holds.length} holds, grade ${route.grade} (estimated)` +
-        (route.short ? " - fewer holds than asked, that is all that fits." : "") +
-        (route.warnings.length && !/not measured/.test(route.warnings[0]) ? " ! " + route.warnings[0] : "");
-      $("make").classList.add("hidden"); $("another").classList.remove("hidden"); $("keep").classList.remove("hidden");
+      routeMsg(`${route.holds.length} holds, grade ${route.grade} (estimated), ${skill}.` +
+        (route.short ? " Fewer holds than asked - that is all that fits." : ""));
       drawRoute();
     } catch (e) { fail(e.message); }
     $("make").disabled = $("another").disabled = false;
   }
   $("make").onclick = makeRoute;
   $("another").onclick = makeRoute;
+  // Build my own: tap the holds in climbing order. A tap on a generated route edits it the same way.
+  $("build").onclick = () => { clearError(); routeHow = "built"; editRoute([]); };
+  function routeTap(x, y, k) {
+    if (!wallHolds.length) return;
+    let near = null, best = 22 * k;
+    wallHolds.forEach(h => { const d = Math.hypot(h.px[0] - x, h.px[1] - y); if (d < best) { best = d; near = h; } });
+    if (!near) return;
+    const ids = route ? route.holds.slice() : [];
+    const i = ids.indexOf(near.id);
+    if (i >= 0) ids.splice(i, 1); else ids.push(near.id);
+    routeHow = "built";
+    editRoute(ids);
+  }
+  async function editRoute(ids) {
+    clearError();
+    if (ids.length < 2) {
+      route = ids.length ? { holds: ids, holds_px: ids.map(i => holdById(i).px), grade: "?", warnings: [] } : null;
+      $("route-msg").textContent = ids.length ? "1 hold. Tap the next hold of your route."
+        : "Your own route: tap the holds in climbing order, from the bottom up.";
+      routeButtons();
+      drawRoute();
+      return;
+    }
+    status("Checking the route...");
+    try {
+      route = await Ascent.api("/api/route/check", { wall: wallName, holds: ids });
+      status("");
+      routeMsg(`${route.holds.length} holds, grade ${route.grade} (estimated), built by hand.`);
+      drawRoute();
+    } catch (e) { fail(e.message); }
+  }
   $("keep").onclick = async () => {
     $("keep").disabled = true;
     try {
-      savedRoute = await Ascent.api("/api/route/save", { wall: wallName, holds: route.holds, skill });
+      savedRoute = await Ascent.api("/api/route/save", { wall: wallName, holds: route.holds, skill, how: routeHow });
       step = "climb"; show("s-climb");
       $("climb-title").textContent = `Route ${savedRoute.route} is ready`;
       $("climb-text").textContent = `${savedRoute.holds} holds, grade ${savedRoute.grade} (estimated), ` +
-        `${skill}. Start is green, finish is red.`;
+        `${routeHow === "built" ? "built by hand" : skill}. Start is green, finish is red.`;
     } catch (e) { fail(e.message); }
     $("keep").disabled = false;
   };
+  // Fix the holds: the saved wall's photo, corners and holds back on the screen; Looks good saves a new version
+  $("fix").onclick = async () => {
+    clearError();
+    status("Loading the wall...");
+    try {
+      const info = await Ascent.getJSON("/api/wall/holds?wall=" + encodeURIComponent(wallName));
+      const c = document.createElement("canvas"); c.width = info.w; c.height = info.h;
+      c.getContext("2d").drawImage(wallPhoto, 0, 0, info.w, info.h);
+      photo = c; dataUrl = c.toDataURL("image/jpeg", 0.92);
+      view.width = info.w; view.height = info.h;
+      corners = info.corners; taps = []; found = null;
+      holds = info.holds.map(h => ({ px: h.px, type: h.type || null, colour: h.colour || null }));
+      how = info.mode === "markers" ? "markers" : null;    // null: a saved scan, re-saved under its own name
+      status("");
+      holdStep();
+      view.scrollIntoView({ block: "start", behavior: "smooth" });
+    } catch (e) { fail(e.message); }
+  };
   $("route-back").onclick = () => { step = "start"; show("s-start"); };
-  $("climb-back").onclick = () => routeStep("Pick what you want to train.");
+  $("climb-back").onclick = () => routeStep("Pick what you want to train, or build your own route.");
   $("restart").onclick = () => { step = "start"; show("s-start"); clearError(); };
 
   // ------------------------------------------------------------------ 4. phone down, climb with sounds
@@ -240,20 +316,25 @@
     $("flash").style.color = good ? "var(--green)" : "var(--amber)";
     flashUntil = performance.now() + 1500;
   }
+  function touchHint() {
+    if (touch === "sticker") return learned ? "Sticker colour learned." : "Tap the sticker on the screen once.";
+    if (touch === "hands") return "The laptop tracks your hands - no sticker needed.";
+    return "The laptop tracks your body.";
+  }
   function showAnswer(a) {
     const st = $("state");
     if (a.state === "locked") {
       st.textContent = a.next < a.of ? `Locked - go for hold ${a.next + 1} of ${a.of}` : "Top reached";
       st.className = "state locked";
     } else { st.textContent = a.message; st.className = "state warn"; }
-    $("detail").textContent = learned ? "Sticker colour learned." : "Tap the sticker on the screen once.";
+    $("detail").textContent = touchHint();
     const d = Ascent.drawRings(canvas, video, a);            // draws nothing unless locked
     if (d && a.rings) {
       a.rings.slice(0, a.next).forEach(r => {
         const [x, y] = d.map(r.x, r.y);
         d.ctx.fillStyle = Ascent.COLORS.start; d.ctx.beginPath(); d.ctx.arc(x, y, 7, 0, 2 * Math.PI); d.ctx.fill();
       });
-      (a.hands || []).forEach(h => {
+      (a.hands || []).forEach(h => {                         // where the laptop sees a hand (or the sticker)
         const [x, y] = d.map(h.x, h.y);
         d.ctx.lineWidth = 3; d.ctx.strokeStyle = Ascent.COLORS.amber;
         d.ctx.beginPath(); d.ctx.arc(x, y, 11, 0, 2 * Math.PI); d.ctx.stroke();
@@ -288,7 +369,7 @@
   }
   // A tap on the live view = "this is the sticker": its place in the sent frame goes with the next frame.
   $("cam").addEventListener("pointerdown", e => {
-    if (!running || e.target.closest("button")) return;
+    if (!running || touch !== "sticker" || e.target.closest("button")) return;
     const r = canvas.getBoundingClientRect();
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return;
@@ -312,12 +393,12 @@
     $("start").disabled = true;
     try {
       const info = await Ascent.api("/api/track/start", {
-        wall: wallName, route: savedRoute.route, touch: "sticker", sticker: $("sticker").value });
-      sid = info.sid; learned = false; tap = null;
+        wall: wallName, route: savedRoute.route, touch: $("touch").value, sticker: $("sticker").value });
+      sid = info.sid; learned = false; tap = null; touch = info.touch;
       $("cam").classList.remove("hidden");
       $("bar-photo").classList.add("hidden"); $("bar-climb").classList.remove("hidden");
       $("state").textContent = "Starting..."; $("state").className = "state warn";
-      $("detail").textContent = `${info.route}  ${info.grade} (estimated)  ${info.holds} holds`;
+      $("detail").textContent = `${info.route}  ${info.grade} (estimated)  ${info.holds} holds. ` + touchHint();
       video.style.objectFit = "cover";                        // live view fills the screen, as the rings expect
       Ascent.fullscreen(true);
       await Ascent.startCamera(video);
