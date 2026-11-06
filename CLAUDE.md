@@ -72,4 +72,4 @@ Read the relevant doc before changing behaviour. When a decision changes, update
 - Not yet tested with a real webcam, real Windows windows, or the real ArtRock panel in venue light.
 - Photo matching may fail on low-texture walls — use `--markers`.
 - Flat walls only; partial resets (a few holds moved) aren't detected.
-- Motion tracking with audio feedback is not built and has no owner yet (`docs/08-status-and-next.md`).
+- Motion tracking with audio feedback (`track`) is a minimal first version, not yet tested with a real person or the mannequin, and has no owner yet (`docs/08-status-and-next.md`).

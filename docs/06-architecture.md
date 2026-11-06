@@ -13,6 +13,7 @@ Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a
 | `live` | Route on the live camera. Keys: g new route, n next, f full screen, s screenshot, v record, q quit. `--video` replays a file instead of the webcam. |
 | `preview` | Route drawn on the saved photo — the no-camera backup. |
 | `list` | Walls and routes. |
+| `track` | "Record my try": the route on the live camera plus MediaPipe hand tracking; a sound for each hold reached in order, an alert for an off-route or out-of-order hold. Keys: m sound on/off, q stop. `--video`, `--mute`, `--touch-cm`, `--pose-model`. Needs `pip install mediapipe`. |
 
 ## Data on disk
 
@@ -74,6 +75,17 @@ The first hold is the start (green), the last the finish (red), the rest the mid
 
 **Speed.** About 60–80 ms per frame for SIFT on a laptop-class CPU; ORB (`--features orb`) is about twice as fast and less robust.
 
+## Motion tracking (`track`)
+
+- **Pose:** MediaPipe Pose, imported only inside `track`, so every other command works without it. Supports the old `mediapipe.solutions` API and the newer Tasks API (MediaPipe 1.x), which needs `models/pose_landmarker_lite.task` (5.5 MB, downloaded once on first use, kept out of git; `--pose-model FILE` to use a copy).
+- **Hands only.** A hand's position is the mean of wrist, index and pinky landmarks (visibility > 0.5). Feet are free, as for generated routes.
+- **Into wall centimetres:** frame pixels → photo pixels with the inverse of the tracker's H → wall cm with the scan's rectification. Hands only count, and rings are only drawn, while the wall is **locked**.
+- **Touch rule:** a hand within 12 cm (`--touch-cm`) of a hold's centre for 0.4 s is on that hold.
+- **Order:** the next hold in the route → "good" sound; the finish → "top"; a route hold further ahead → "order" alert, the holds in between count as skipped; a hold not on the route → "off" alert (at most once per hold per 2 s). Touches before the start or after the top don't count; going back to a hold already reached is silent.
+- **The camera's guess:** `sent` = finish reached in order with no off-route holds; `tried` = got past the start; `fail` = did not. Always shown as a suggestion.
+- **Sounds:** four short tones made with the standard library at start-up; played without waiting through winsound (Windows), afplay (macOS) or paplay/aplay (Linux), otherwise the terminal bell. No sound files in git.
+- **Privacy:** no video is saved, nothing leaves the laptop; the screen and console say that an AI model is tracking the body (AI Act Art. 50) and that it does not judge whether a movement is safe.
+
 ## Route generator (rules, no AI)
 
 - **Reach** = 0.55 × climber height (95 cm for 172 cm). No move may exceed it.
@@ -88,7 +100,7 @@ The first hold is the start (green), the last the finish (red), the rest the mid
 ## Tests
 
 - `python ascent.py selftest` — install check, overlay error on a synthetic warped wall.
-- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing. 21 checks.
+- `python tests/rehearsal.py` — a full session with scripted clicks, keys and a synthetic moving camera: scan (with undo and out-of-order corners), generate with every filter, build, preview, live (g, n, s, f), lighting (dim, glare, spotlight, noise), markers mode, re-scan versioning, `--width`/`--height` without typing, motion tracking with a scripted hand (in order, off-route, out of order, no lock). 27 checks, plus one that runs the real MediaPipe model when it is installed.
 
 **Not covered:** a real webcam, real windows on Windows, the real panel under venue light.
 

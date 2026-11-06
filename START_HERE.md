@@ -80,12 +80,24 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. 21 checks, all passing.
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. 27 checks (28 with MediaPipe installed), all passing.
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.
 
 To replay a recording instead of the webcam: `python ascent.py live --wall panel --video clip.mp4`.
+
+## Record my try (motion tracking with sounds)
+
+Needs MediaPipe once: `pip install mediapipe`. Everything else works without it.
+
+```
+python ascent.py track --wall panel --route r1
+```
+
+Put the laptop 3-4 m back with the whole panel in frame, never on the landing zone. Climb the route: a high beep for each hold reached in order, a low buzz for a hold that is not on the route, a double beep for out of order, a little tune at the top. At the end it prints the camera's guess (sent / tried / fail). Keys: **m** sound on/off, **q** stop. `--mute` for no sound, `--video clip.mp4` to replay a recording.
+
+The first run downloads a 5.5 MB pose model into `models/` - do it once while there is wifi. No video is saved.
 
 ## Re-scanning after a reset
 

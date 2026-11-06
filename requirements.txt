@@ -1,2 +1,3 @@
 opencv-contrib-python
 numpy
+# optional, only for "track" (motion tracking):  pip install mediapipe

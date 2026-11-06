@@ -37,7 +37,7 @@ The phone screens live on a Design canvas in Claude: **Project Ascent — scan a
 5. **"Record my try" needs a placement step** — the phone must be 3–4 m back with the whole wall in frame.
 6. **The scale field asks for a tape measure.** Make it skippable ("Skip — no reach check").
 7. **Generated grades must read "≈6a (estimated)".**
-8. **Audio feedback has no screen anywhere.**
+8. **Audio feedback has no screen anywhere.** The prototype's `track` window is a starting point: "Next: hold N of M", a green dot on each hold reached, a short message with every sound.
 9. **Dependencies on other groups:** height (profile, Group 3), "41 climbed" (logbook, Group 2), "You are here" (GPS). Each needs a demo fallback.
 
 ## Other artifacts

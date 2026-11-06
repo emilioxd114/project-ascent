@@ -109,6 +109,86 @@ def write_video(path, photo, Hs, blank_tail=0):
     w.release()
 
 
+def rehearse_track(gui, photo, holds, corners):
+    """Motion tracking: a scripted hand moves over the holds of a moving-camera video."""
+    _, s = ascent.fit(photo)
+    disp = lambda p: ("click", p[0] * s, p[1] * s)
+    gui.strict = True
+    gui.actions = [disp(c) for c in corners] + [("key", 13)] + [disp(h) for h in holds] + [("key", 13)]
+    ascent.cmd_scan(SimpleNamespace(wall="tw", image="panel.jpg", markers=False, camera=0, width=300.0, height=216.0))
+    wall = json.load(open("walls/tw/wall.json"))
+    px = {h["id"]: h["px"] for h in wall["holds"]}
+    by_height = sorted(px, key=lambda i: -px[i][1])            # bottom of the photo first
+    route = by_height[0:25:5]                                  # 5 holds, bottom to top
+    off = by_height[2]
+    ascent.save_route(wall, route, "t1", "built", 172)
+
+    def run(script):
+        frames = 10 * len(script) + 6
+        Hs = camera_path(frames)
+        write_video("track.avi", photo, Hs)
+
+        class FakePose:
+            def hands(self, frame, t):
+                i = int(round(t * 15))
+                k = i // 10
+                if k >= len(script) or script[k] is None:
+                    return {}
+                x, y = ascent.transform(Hs[i], [px[script[k]]])[0]
+                return {"right": (x + 3, y - 2)}
+
+            def close(self):
+                pass
+
+        sounds = []
+        ascent.make_pose_detector = lambda path=None: FakePose()
+        real_play = ascent.play_sound
+        ascent.play_sound = sounds.append
+        gui.strict = False
+        gui.actions = []
+        try:
+            summary = ascent.run_track(SimpleNamespace(wall="tw", route="t1", camera=0, video="track.avi",
+                                                       features="sift", touch_cm=ascent.TOUCH_CM,
+                                                       pose_model=None, mute=False))
+        finally:
+            ascent.play_sound = real_play
+        return summary, sounds
+
+    clean, sounds = run([off, route[0], route[1], route[2], route[3], route[4]])
+    check("track: clean climb is a send", clean["result"] == "sent" and clean["reached"] == 5, str(clean["result"]))
+    check("track: a sound for every hold in order, top at the end",
+          sounds == ["good"] * 4 + ["top"], str(sounds))
+    check("track: an off-route hold before the start is ignored", clean["off_route"] == [])
+    messy, sounds = run([route[0], route[1], off, route[2], route[4]])
+    check("track: off-route and out-of-order holds give an alert",
+          sounds == ["good", "good", "off", "good", "top"] and messy["off_route"] == [off]
+          and messy["skipped"] == [route[3]], f"{sounds} off={messy['off_route']} skipped={messy['skipped']}")
+    check("track: not clean, so only 'tried'", messy["result"] == "tried", messy["result"])
+
+    # nothing counts while the wall is not locked
+    real_locate = ascent.Tracker.locate
+    ascent.Tracker.locate = lambda self, frame: (None, "lost")
+    try:
+        lost, sounds = run(route)
+    finally:
+        ascent.Tracker.locate = real_locate
+    check("track: no lock, no touches counted", lost["reached"] == 0 and sounds == [])
+
+    model = os.path.join(ROOT, ascent.POSE_MODEL_PATH)
+    try:
+        import mediapipe  # noqa: F401
+        have_mp = True
+    except ImportError:
+        have_mp = False
+    if have_mp and os.path.exists(model):
+        det = ascent.PoseDetector(model)
+        seen = det.hands(np.zeros((480, 640, 3), np.uint8), 0.0)
+        det.close()
+        check("track: real MediaPipe runs and sees no hands on an empty frame", seen == {})
+    else:
+        print("[SKIP] real MediaPipe check (mediapipe or models/pose_landmarker_lite.task not installed)")
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -281,6 +361,8 @@ def main():
         except ascent.argparse.ArgumentTypeError:
             refused = True
         check("scan refuses a size of 0 cm", refused and ascent.positive_cm("2,5") == 2.5)
+
+        rehearse_track(gui, photo, holds, corners)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

@@ -28,7 +28,7 @@ The eight questions to ask of any feature:
 - The Digital Omnibus (Regulation (EU) 2026/1744, in force 27 July 2026) moved **high-risk obligations to 2 Dec 2027**. Art. 50 **transparency** obligations have applied since 2 Aug 2026; Art. 4 **AI literacy** also applies.
 - **Emotion recognition in the workplace and in education is prohibited.** Never analyse a climber's mood or tone.
 - The route generator is rules-based and explainable — it is not an AI system in the risky sense.
-- A partnered movement-analysis feature must tell users that AI is involved (Art. 50).
+- A partnered movement-analysis feature must tell users that AI is involved (Art. 50). The prototype's own `track` already does: MediaPipe Pose is an AI model, so the console and the window say so, say that no video is saved, and say that it does not judge whether a movement is safe.
 
 ## Medical device line (Laura)
 

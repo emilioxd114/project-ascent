@@ -9,7 +9,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Concept:** fundamental decisions, scope, roadmap (04-product.md).
 - **Design:** nine phone screens on the canvas, in two rows (05-design.md).
 - **Prototype** (`ascent.py`): scan with corners, scale, hold tapping and types; markers fallback; rules-based generator with reach guardrails and skill filters; build mode; live overlay with route switching and live generation; never guessing; two-look tracking for venue lighting; full screen; screenshots and recording; wall versioning.
-- **Tests:** selftest and the 21-check rehearsal, all passing.
+- **Motion tracking with audio** (`track`, 6 Nov): MediaPipe hand tracking mapped into wall centimetres, sounds for right/wrong order, the camera's guess of sent / tried / fail. Tested with a scripted hand and the real model on an empty frame; **not yet tested with a real person or the wooden mannequin.**
+- **Tests:** selftest and the rehearsal (27 checks, 28 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested
@@ -25,7 +26,7 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Hold data.** Do ArtRock route setters design walls digitally? A CAD file would replace manual hold tapping.
 - **Platform.** Would ArtRock own the app, or plug into an existing platform? After the Kilter–Aurora split, this matters.
 - **Business model.** Gyms per wall, therapists per practice, or bundled with walls?
-- **Motion tracking owner.** Still unassigned.
+- **Motion tracking owner.** A minimal version is built (`track`); someone still needs to own testing it on the mannequin and tuning the 12 cm / 0.4 s touch rule.
 
 ## Next steps
 
@@ -48,11 +49,11 @@ Status as of the night of 5 Nov 2026, before the final day.
 - Visibility model first: private / friends / public, with stricter defaults for minors and health data.
 - Duplicate walls: merge by gym and location.
 
-### Unassigned — motion tracking with audio
+### Motion tracking with audio — minimal version built (`track`)
 
 - MediaPipe Pose on the recorded or live frame; map wrists and ankles through the same homography into wall coordinates; a hold is "touched" when a hand stays within a few centimetres of it.
 - Audio: a positive sound for the next hold in order, an alert for an off-route hold.
-- Test on the wooden mannequin from the test rig.
+- Built: everything above. Next: test on the wooden mannequin from the test rig and tune the touch rule.
 - Keep it minimal and pitch a ClimbAI partnership for deep analysis.
 
 ## Moving beyond the hackathon

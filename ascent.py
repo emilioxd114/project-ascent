@@ -14,12 +14,14 @@ Commands
   python ascent.py live --wall panel --route r1     route drawn on the live camera
   python ascent.py preview --wall panel --route r1  route drawn on the saved photo (demo backup)
   python ascent.py list                             show saved walls and routes
+  python ascent.py track --wall panel --route r1    record my try: hand tracking with sounds (needs mediapipe)
 
 Keys in the windows
   scan corners : click 4 corners (top-left, top-right, bottom-right, bottom-left), u = undo, Enter = done
   scan holds   : click each hold, then j/c/s/p/k to tag it jug/crimp/sloper/pinch/pocket, u = undo, Enter = done
   build        : click holds in climbing order, u = undo, Enter = done
   live         : q = quit, s = screenshot, v = start/stop recording a video
+  track        : q = stop, m = sound on/off
 """
 
 import argparse
@@ -901,6 +903,289 @@ def cmd_live(args):
     cv2.destroyAllWindows()
 
 
+# ---------------------------------------------------------------- motion tracking with audio
+
+POSE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
+                  "pose_landmarker_lite/float16/latest/pose_landmarker_lite.task")
+POSE_MODEL_PATH = os.path.join("models", "pose_landmarker_lite.task")
+HAND_JOINTS = {"left": (15, 17, 19), "right": (16, 18, 20)}   # MediaPipe Pose: wrist, pinky, index
+TOUCH_CM = 12.0      # a hand closer than this to a hold's centre is on that hold
+DWELL_S = 0.4        # ... and must stay that long, so a hand passing by doesn't count
+SOUND_FILES = {}
+
+
+class PoseDetector:
+    """MediaPipe Pose, run on this laptop. hands(frame, t) -> {"left": (x, y), "right": (x, y)} in frame
+    pixels, only for hands it can see. MediaPipe is imported here, so every other command works without it."""
+
+    def __init__(self, model_path=None):
+        try:
+            import mediapipe as mp
+        except ImportError:
+            sys.exit("track needs MediaPipe: pip install mediapipe   (every other command works without it)")
+        self.mp, self.legacy, self.last_ms = mp, None, -1
+        if hasattr(mp, "solutions") and hasattr(mp.solutions, "pose"):
+            self.legacy = mp.solutions.pose.Pose(model_complexity=0)
+            return
+        from mediapipe.tasks.python import vision
+        from mediapipe.tasks.python.core.base_options import BaseOptions
+        path = model_path or POSE_MODEL_PATH
+        if not os.path.exists(path):
+            print(f"Downloading the pose model once (5.5 MB) to {path} ...")
+            try:
+                import urllib.request
+                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+                urllib.request.urlretrieve(POSE_MODEL_URL, path + ".part")
+                os.replace(path + ".part", path)
+            except Exception as e:
+                sys.exit(f"Could not download the pose model ({e}).\nDownload it by hand from\n  {POSE_MODEL_URL}\n"
+                         f"save it as {path}, or pass --pose-model FILE.")
+        opts = vision.PoseLandmarkerOptions(base_options=BaseOptions(model_asset_path=path),
+                                            running_mode=vision.RunningMode.VIDEO, num_poses=1)
+        self.tasks = vision.PoseLandmarker.create_from_options(opts)
+
+    def hands(self, frame, t):
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w = frame.shape[:2]
+        if self.legacy is not None:
+            res = self.legacy.process(rgb)
+            lms = res.pose_landmarks.landmark if res.pose_landmarks else None
+        else:
+            ms = max(int(t * 1000), self.last_ms + 1)          # timestamps must always increase
+            self.last_ms = ms
+            res = self.tasks.detect_for_video(self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=rgb), ms)
+            lms = res.pose_landmarks[0] if res.pose_landmarks else None
+        out = {}
+        if lms:
+            for side, joints in HAND_JOINTS.items():
+                pts = [lms[j] for j in joints]
+                if min(getattr(p, "visibility", 1.0) or 0.0 for p in pts) > 0.5:
+                    out[side] = (float(np.mean([p.x for p in pts])) * w, float(np.mean([p.y for p in pts])) * h)
+        return out
+
+    def close(self):
+        (self.legacy or self.tasks).close()
+
+
+class AttemptWatcher:
+    """Decides, from hand positions in wall centimetres, which holds were touched and whether in order.
+    Rules only: a hand is on a hold when it stays within TOUCH_CM of the hold's centre for DWELL_S.
+    Feet are free, so only hands count. Never judges whether a movement is safe."""
+
+    def __init__(self, wall, route_ids, touch_cm=TOUCH_CM, dwell=DWELL_S):
+        self.pos = hold_cm(wall)
+        self.route = list(route_ids)
+        self.touch_cm, self.dwell = touch_cm, dwell
+        self.next = 0                  # index in the route of the next hold to reach
+        self.skipped, self.off_route, self.touches = [], [], []
+        self.cand, self.on, self.last_off = {}, {}, {}
+        self.started_at, self.finished_at = None, None
+
+    def nearest(self, p):
+        hid, d = min(((i, float(np.linalg.norm(q - p))) for i, q in self.pos.items()), key=lambda x: x[1])
+        return hid if d <= self.touch_cm else None
+
+    def update(self, hands_cm, t):
+        """hands_cm: {"left": (x, y), "right": (x, y)} in cm. Returns a list of (sound, message)."""
+        events = []
+        for side in ("left", "right"):
+            hid = self.nearest(np.array(hands_cm[side], dtype=float)) if side in hands_cm else None
+            if hid is None:
+                self.cand.pop(side, None)
+                self.on[side] = None
+                continue
+            if self.cand.get(side, (None,))[0] != hid:
+                self.cand[side] = (hid, t)
+            if t - self.cand[side][1] >= self.dwell and self.on.get(side) != hid:
+                self.on[side] = hid
+                ev = self._arrive(hid, t, side)
+                if ev:
+                    events.append(ev)
+        return events
+
+    def _arrive(self, hid, t, side):
+        self.touches.append({"hold": hid, "hand": side, "t": round(t, 2)})
+        n = len(self.route)
+        if hid in self.route:
+            idx = self.route.index(hid)
+            if idx < self.next:
+                return None                                  # back on a hold already reached: fine, silent
+            if self.next == 0:
+                self.started_at = t
+            if idx > self.next:
+                self.skipped += self.route[self.next:idx]
+                msg = f"Hold {idx + 1} before hold {self.next + 1} - out of order"
+                self.next = idx + 1
+                kind = "order"
+            else:
+                self.next += 1
+                kind, msg = "good", f"Hold {idx + 1} of {n}"
+            if self.next == n:
+                self.finished_at = t
+                return "top", "Top! " + ("Clean, in order." if self.clean() else "Finish reached.")
+            return kind, msg
+        if self.next == 0 or self.finished_at is not None:
+            return None                                      # before the start or after the top: not counted
+        if t - self.last_off.get(hid, -99) < 2.0:
+            return None
+        self.last_off[hid] = t
+        self.off_route.append(hid)
+        return "off", "That hold is not on the route"
+
+    def clean(self):
+        return not self.skipped and not self.off_route
+
+    def result(self):
+        """sent = reached the finish, in order, no off-route holds; tried = got past the start; fail = did not."""
+        if self.next == len(self.route) and self.clean():
+            return "sent"
+        return "tried" if self.next >= 2 else "fail"
+
+    def summary(self):
+        return {"result": self.result(), "reached": self.next, "of": len(self.route),
+                "skipped": self.skipped, "off_route": self.off_route, "touches": self.touches,
+                "seconds": round(self.finished_at - self.started_at, 1)
+                if self.started_at is not None and self.finished_at is not None else None}
+
+
+def make_sound_files():
+    """Short tones, made once with the standard library: no sound files in git, no extra install."""
+    import tempfile
+    import wave
+    tones = {"good": [(880, 0.09), (1320, 0.12)], "order": [(520, 0.12), (520, 0.12)],
+             "off": [(220, 0.35)], "top": [(660, 0.1), (880, 0.1), (1320, 0.25)]}
+    d = tempfile.mkdtemp(prefix="ascent_sounds_")
+    rate = 22050
+    for kind, notes in tones.items():
+        samples = []
+        for f, dur in notes:
+            k = int(rate * dur)
+            env = np.minimum(1, np.minimum(np.arange(k), np.arange(k)[::-1]) / (0.01 * rate))
+            samples.append(0.5 * env * np.sin(2 * np.pi * f * np.arange(k) / rate))
+            samples.append(np.zeros(int(rate * 0.03)))
+        data = (np.concatenate(samples) * 32767).astype("<i2").tobytes()
+        path = os.path.join(d, f"{kind}.wav")
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(data)
+        SOUND_FILES[kind] = path
+
+
+def play_sound(kind):
+    """Plays without waiting: Windows winsound, macOS afplay, Linux paplay/aplay, else the terminal bell."""
+    try:
+        if not SOUND_FILES:
+            make_sound_files()
+        path = SOUND_FILES[kind]
+        if os.name == "nt":
+            import winsound
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            return
+        import subprocess
+        for player in (["afplay"], ["paplay"], ["aplay", "-q"]):
+            if shutil.which(player[0]):
+                subprocess.Popen(player + [path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+    except Exception:
+        pass
+    print("\a", end="", flush=True)
+
+
+def make_pose_detector(model_path=None):
+    return PoseDetector(model_path)
+
+
+def run_track(args):
+    """Runs one tracked attempt and returns its summary."""
+    wall, ref = load_wall(args.wall)
+    route = load_route(args.wall, args.route)
+    if route.get("wall_version") != wall["version"]:
+        print(f"Warning: route {route['name']} was made on an older version of the wall.")
+    px = {h["id"]: h["px"] for h in wall["holds"]}
+    ref_pts = np.array([px[i] for i in route["holds"]], dtype=np.float32)
+    R = rectify_matrix(wall["corners_px"], wall["size_cm"]["w"], wall["size_cm"]["h"])
+    print("Record my try: put the camera 3-4 m back, whole wall in frame, never on the landing zone.")
+    print("Body tracking uses an AI model (MediaPipe Pose) on this laptop. No video is saved and nothing")
+    print("leaves the device. It only checks which holds your hands touch - it does not judge whether a")
+    print("movement is safe. Only film people who agreed to it.")
+    detector = make_pose_detector(args.pose_model)
+    tracker = Tracker(wall, ref, args.features)
+    if args.video:
+        cap = cv2.VideoCapture(args.video)
+        if not cap.isOpened():
+            sys.exit(f"Could not open video {args.video}")
+        fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
+    else:
+        cap, fps = open_camera(args.camera), None
+    watcher = AttemptWatcher(wall, route["holds"], args.touch_cm)
+    sound = (lambda kind: None) if args.mute else play_sound
+    win = "Ascent - record my try"
+    cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+    ring_ref = 0.022 * ref.shape[1]
+    flash, frame_i, started = None, 0, time.time()
+    print("q = stop, m = sound on/off")
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        t = frame_i / fps if fps else time.time() - started
+        frame_i += 1
+        H, state = tracker.locate(frame)
+        view = frame.copy()
+        if H is not None:
+            # Never guess: hands only count, and rings are only drawn, while the wall is locked.
+            pts = transform(H, ref_pts)
+            edge = transform(H, [[0, 0], [ring_ref, 0]])
+            draw_route(view, pts, float(np.linalg.norm(edge[1] - edge[0])))
+            for i in range(watcher.next):
+                cv2.circle(view, tuple(int(v) for v in pts[i]), 7, GREEN, -1, cv2.LINE_AA)
+            hands = detector.hands(frame, t)
+            if hands:
+                to_cm = R @ np.linalg.inv(H)
+                sides = list(hands)
+                cms = transform(to_cm, [hands[s] for s in sides])
+                for s in sides:
+                    cv2.circle(view, tuple(int(v) for v in hands[s]), 9, WHITE, 2, cv2.LINE_AA)
+                for kind, msg in watcher.update(dict(zip(sides, cms)), t):
+                    sound(kind)
+                    print(f"{t:6.1f} s  {msg}")
+                    flash = (msg, GREEN if kind in ("good", "top") else AMBER, t)
+            nxt = (f"Next: hold {watcher.next + 1} of {len(route['holds'])}" if watcher.next < len(route["holds"])
+                   else "Top reached")
+            put_text(view, f"Locked  {route['name']}  {nxt}", (16, 34), 0.75, GREEN)
+        else:
+            put_text(view, {"far": "Move closer", "close": "Step back - show the whole wall"}.get(
+                state, f"Point the camera at '{wall['name']}'"), (16, 34), 0.75, AMBER)
+        if flash and t - flash[2] < 1.5:
+            put_text(view, flash[0], (16, 70), 0.8, flash[1])
+        put_text(view, "AI body tracking on this laptop - no video saved.  m sound  q stop",
+                 (16, view.shape[0] - 18), 0.5, GREY, 1)
+        cv2.imshow(win, view)
+        k = cv2.waitKey(1) & 0xFF
+        if k == ord("q") or k == 27:
+            break
+        if k == ord("m"):
+            sound = play_sound if sound is not play_sound else (lambda kind: None)
+            print("Sound " + ("on" if sound is play_sound else "off"))
+    cap.release()
+    detector.close()
+    cv2.destroyAllWindows()
+    s = watcher.summary()
+    print(f"\nReached {s['reached']} of {s['of']} holds in order.", end="")
+    if s["skipped"]:
+        print(f"  Skipped: {s['skipped']}.", end="")
+    if s["off_route"]:
+        print(f"  Off-route holds touched: {s['off_route']}.", end="")
+    print(f"\nThe camera's guess: {s['result']}. You know better - it is only a suggestion.")
+    return s
+
+
+def cmd_track(args):
+    run_track(args)
+
+
 def cmd_list(args):
     if not os.path.isdir(DATA_DIR):
         print("No walls yet. Run: python ascent.py scan --wall panel")
@@ -961,13 +1246,23 @@ def main():
     p.add_argument("--height", type=float, default=172)
     p.add_argument("--level", choices=list(LEVEL_TARGET), default="medium")
 
+    p = sub.add_parser("track", help="record my try: hand tracking with sounds (needs mediapipe)")
+    p.add_argument("--wall", required=True)
+    p.add_argument("--route", required=True)
+    p.add_argument("--camera", type=int, default=0)
+    p.add_argument("--video", help="use a video file instead of the webcam")
+    p.add_argument("--features", choices=["sift", "orb"], default="sift")
+    p.add_argument("--touch-cm", type=positive_cm, default=TOUCH_CM, help="how close a hand must be to a hold")
+    p.add_argument("--pose-model", help="MediaPipe pose model file (downloaded once if missing)")
+    p.add_argument("--mute", action="store_true", help="no sounds, messages only")
+
     p = sub.add_parser("preview")
     p.add_argument("--wall", required=True)
     p.add_argument("--route", required=True)
 
     args = ap.parse_args()
     handler = {"selftest": cmd_selftest, "scan": cmd_scan, "generate": cmd_generate, "build": cmd_build,
-               "live": cmd_live, "preview": cmd_preview, "list": cmd_list}[args.cmd]
+               "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track}[args.cmd]
     sys.exit(handler(args) or 0)
 
 
