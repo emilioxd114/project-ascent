@@ -16,3 +16,6 @@ challenges/
 
 # The local HTTPS certificate and its private key for "serve" - made on each laptop, never shared
 tls/
+
+# Demo footage and photos (may show people, too big for git) - keep them in demo/ on the laptop
+demo/
