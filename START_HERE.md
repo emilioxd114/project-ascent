@@ -80,7 +80,7 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress and recommendations. 44 checks (45 with MediaPipe installed), all passing.
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations and profiles. 56 checks (57 with MediaPipe installed), all passing.
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.
@@ -109,6 +109,16 @@ python ascent.py log --climber lena
 ```
 
 Results: **sent** (reached the top in order), **tried** (got past the start), **fail** (didn't get going). Add `--note "slipped off 4"` or `--date 2026-11-02`. `--undo` removes the last entry. Logbooks are personal data: they stay in `logbook/` on this laptop and are not pushed to GitHub.
+
+## Profiles (the sign-up, on this laptop)
+
+```
+python ascent.py profile --climber lena --goal train --level medium --height 165 --language de
+python ascent.py profile --climber max --goal play --minor --height 150
+python ascent.py profile --climber laura --goal rehab --therapist "Dr. Berger" --rehab-level easy --sessions-per-week 2
+```
+
+Goal **train** shows skills, **play** shows levels, **rehab** shows sessions against the therapist's goal. Height and level are used by `recommend`. Profiles are private by default; under-18s can't be public and need `--parental-consent` for friends. `profile` alone lists everyone; `profile --climber max --delete --yes` deletes everything stored about Max.
 
 ## Progress and what to climb next
 

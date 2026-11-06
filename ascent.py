@@ -17,6 +17,7 @@ Commands
   python ascent.py track --wall panel --route r1    record my try: hand tracking with sounds (needs mediapipe)
   python ascent.py log --climber lena --wall panel --route r1 --result sent    log a climb (sent/tried/fail)
   python ascent.py log --climber lena               show Lena's logbook
+  python ascent.py profile --climber lena --goal train --level medium --height 165   sign-up details
   python ascent.py progress --climber lena          stats, skills / level / rehab sessions, milestones
   python ascent.py recommend --climber lena --wall panel --make 3    what to train next, by rules
 
@@ -1244,6 +1245,138 @@ def cmd_recommend(args):
         print(f"Climb them: python ascent.py live --wall {wall['name']} --route <name>")
 
 
+# ---------------------------------------------------------------- profile
+
+VISIBILITY = ("private", "friends", "public")
+LANGUAGES = ("en", "de")
+
+
+def profile_path(climber):
+    return os.path.join(PROFILE_DIR, f"{climber_id(climber)}.json")
+
+
+def check_visibility(p):
+    """Stricter rules for minors and health data. Sharing itself needs a server and is not built yet;
+    the setting is stored so the rules exist before any sharing feature ships."""
+    if p.get("minor"):
+        if p["visibility"] == "public":
+            return "A climber under 18 can't be public."
+        if p["visibility"] == "friends" and not p.get("parental_consent"):
+            return "A climber under 18 needs --parental-consent to be visible to friends."
+    return None
+
+
+def show_profile(p):
+    print(f"Profile {p['name']}")
+    print(f"  goal {p['goal']}, level {p['level']}, height {p['height_cm']:g} cm, language {p['language']}")
+    who = "under 18" + (", parental consent given" if p.get("parental_consent") else ", no parental consent")
+    print(f"  {who if p.get('minor') else 'adult'}, visible to: {p['visibility']}")
+    r = p.get("rehab")
+    if r:
+        bits = [f"therapist {r['therapist']}" if r.get("therapist") else None,
+                f"level {r['level']}" if r.get("level") else None,
+                f"{r['sessions_per_week']} sessions a week" if r.get("sessions_per_week") else None]
+        print("  rehab (health data - always private, set by the therapist): " + ", ".join(b for b in bits if b))
+
+
+def personal_files(cid):
+    """Everything stored about one person, for showing or deleting it."""
+    files = [f for f in (profile_path(cid), log_path(cid)) if os.path.exists(f)]
+    routes = []
+    if os.path.isdir(DATA_DIR):
+        for root, _, names in os.walk(DATA_DIR):
+            for n in names:
+                if n.endswith(".json") and os.path.basename(root) == "routes":
+                    path = os.path.join(root, n)
+                    with open(path, encoding="utf-8") as f:
+                        if json.load(f).get("by") == cid:
+                            routes.append(path)
+    return files, routes
+
+
+def cmd_profile(args):
+    if not args.climber:
+        names = sorted(f[:-5] for f in os.listdir(PROFILE_DIR) if f.endswith(".json")) \
+            if os.path.isdir(PROFILE_DIR) else []
+        print("Profiles: " + (", ".join(names) if names else "none yet. Make one: python ascent.py profile "
+                              "--climber lena --goal train --level medium --height 165"))
+        return
+    cid = climber_id(args.climber)
+    if args.delete:
+        files, routes = personal_files(cid)
+        if not files and not routes:
+            print(f"Nothing is stored about {cid}.")
+            return
+        if not args.yes:
+            print(f"This would delete everything stored about {cid}:")
+            for f in files:
+                print("  " + f)
+            if routes:
+                print(f"  and remove the name from {len(routes)} route(s) they set (the routes stay, anonymous)")
+            print(f"To do it: python ascent.py profile --climber {cid} --delete --yes")
+            return
+        for f in files:
+            os.remove(f)
+        for path in routes:
+            with open(path, encoding="utf-8") as fh:
+                r = json.load(fh)
+            r.pop("by", None)
+            save_json(path, r)
+        print(f"Deleted everything stored about {cid} ({len(files)} files, "
+              f"{len(routes)} routes made anonymous).")
+        return
+
+    p = load_profile(cid)
+    fields = {"goal": args.goal, "level": args.level, "height_cm": args.height, "language": args.language,
+              "visibility": args.visibility}
+    rehab_given = args.therapist or args.rehab_level or args.sessions_per_week
+    if p is None and not any(v is not None for v in fields.values()) and not args.minor:
+        sys.exit(f"No profile for {cid} yet. Make one: python ascent.py profile --climber {cid} "
+                 "--goal train --level medium --height 165")
+    if p is not None and not any(v is not None for v in fields.values()) and not (
+            rehab_given or args.minor or args.adult or args.parental_consent):
+        show_profile(p)
+        return
+    new = p is None
+    p = p or {"name": cid, "goal": "train", "level": "medium", "height_cm": 172.0, "language": "en",
+              "minor": False, "visibility": "private", "created": time.strftime("%Y-%m-%d %H:%M")}
+    for k, v in fields.items():
+        if v is not None:
+            p[k] = v
+    if args.minor:
+        p["minor"] = True
+    if args.adult:
+        p["minor"] = False
+        p.pop("parental_consent", None)
+    if args.parental_consent:
+        if not p.get("minor"):
+            sys.exit("--parental-consent is only for climbers under 18 (--minor).")
+        p["parental_consent"] = True
+    if rehab_given:
+        if p["goal"] != "rehab":
+            sys.exit("Rehab settings need --goal rehab.")
+        r = p.setdefault("rehab", {})
+        if args.therapist:
+            r["therapist"] = args.therapist
+        if args.rehab_level:
+            r["level"] = args.rehab_level
+        if args.sessions_per_week:
+            r["sessions_per_week"] = args.sessions_per_week
+    if p["goal"] != "rehab" and p.get("rehab"):
+        p.pop("rehab")
+        print("Goal is no longer rehab, so the rehab settings were removed.")
+    problem = check_visibility(p)
+    if problem:
+        sys.exit(problem + " Nothing was saved.")
+    if not 90 <= p["height_cm"] <= 230:
+        print(f"Note: {p['height_cm']:g} cm is unusual - check the height, it sets the reach (0.55 x height).")
+    save_json(profile_path(cid), p)
+    print(("Created" if new else "Updated") + f" profile {cid}.")
+    show_profile(p)
+    if p["visibility"] != "private":
+        print("  (Sharing needs a server and is not built yet - this setting is stored for later.)")
+
+
 # ---------------------------------------------------------------- motion tracking with audio
 
 POSE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
@@ -1608,6 +1741,22 @@ def main():
     p.add_argument("--mute", action="store_true", help="no sounds, messages only")
     p.add_argument("--climber", help="save the attempt in this climber's logbook")
 
+    p = sub.add_parser("profile", help="a climber's goal, level, height, language, visibility; or delete them")
+    p.add_argument("--climber", help="leave out to list profiles")
+    p.add_argument("--goal", choices=GOALS, help="train (Lena), play (Max), rehab (Laura)")
+    p.add_argument("--level", choices=LEVELS)
+    p.add_argument("--height", type=positive_cm, help="in cm - sets the reach for generated routes")
+    p.add_argument("--language", choices=LANGUAGES)
+    p.add_argument("--visibility", choices=VISIBILITY)
+    p.add_argument("--minor", action="store_true", help="climber is under 18: stricter rules")
+    p.add_argument("--adult", action="store_true")
+    p.add_argument("--parental-consent", action="store_true")
+    p.add_argument("--therapist", help="rehab: the therapist's name")
+    p.add_argument("--rehab-level", choices=LEVELS, help="rehab: level set by the therapist")
+    p.add_argument("--sessions-per-week", type=int, help="rehab: the therapist's goal")
+    p.add_argument("--delete", action="store_true", help="delete everything stored about this climber")
+    p.add_argument("--yes", action="store_true", help="confirm --delete")
+
     p = sub.add_parser("progress", help="stats, skills, level or rehab sessions, milestones")
     p.add_argument("--climber", required=True)
     p.add_argument("--goal", choices=GOALS, help="train (skills), play (levels), rehab (sessions); default: profile")
@@ -1637,7 +1786,8 @@ def main():
     args = ap.parse_args()
     handler = {"selftest": cmd_selftest, "scan": cmd_scan, "generate": cmd_generate, "build": cmd_build,
                "live": cmd_live, "preview": cmd_preview, "list": cmd_list, "track": cmd_track,
-               "log": cmd_log, "progress": cmd_progress, "recommend": cmd_recommend}[args.cmd]
+               "log": cmd_log, "progress": cmd_progress, "recommend": cmd_recommend,
+               "profile": cmd_profile}[args.cmd]
     sys.exit(handler(args) or 0)
 
 

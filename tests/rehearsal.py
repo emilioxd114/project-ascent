@@ -284,6 +284,52 @@ def rehearse_progress():
           len(made) == 2 and all(r.get("by") == "nora" and r["height_cm"] == 165.0 for r in made))
 
 
+def rehearse_profile():
+    """Profiles: sign-up details, stricter rules for minors and health data, delete one person."""
+    base = dict(climber=None, goal=None, level=None, height=None, language=None, visibility=None, minor=False,
+                adult=False, parental_consent=False, therapist=None, rehab_level=None, sessions_per_week=None,
+                delete=False, yes=False)
+    prof = lambda **kw: quiet(ascent.cmd_profile, SimpleNamespace(**{**base, **kw}))
+
+    def refused(**kw):
+        try:
+            prof(**kw)
+            return False
+        except SystemExit:
+            return True
+
+    prof(climber="Lena", goal="train", level="medium", height=165.0, language="de")
+    lena = ascent.load_profile("lena")
+    check("profile: sign-up details saved, private by default",
+          lena["height_cm"] == 165.0 and lena["language"] == "de" and lena["visibility"] == "private")
+    st = ascent.climber_settings(SimpleNamespace(climber="lena", height=None, level=None, goal=None))
+    check("profile: height and level feed the recommendations", st["height"] == 165.0 and st["level"] == "medium")
+    prof(climber="lena", level="hard")
+    check("profile: updating one field keeps the others", ascent.load_profile("lena")["height_cm"] == 165.0
+          and ascent.load_profile("lena")["level"] == "hard")
+    check("profile: a minor can't be public", refused(climber="max", goal="play", minor=True, visibility="public")
+          and ascent.load_profile("max") is None)
+    check("profile: a minor needs parental consent for friends",
+          refused(climber="max", goal="play", minor=True, visibility="friends"))
+    prof(climber="max", goal="play", minor=True, visibility="friends", parental_consent=True, height=150.0)
+    check("profile: ... and with consent it works", ascent.load_profile("max")["visibility"] == "friends")
+    check("profile: rehab settings need goal rehab", refused(climber="lena", rehab_level="easy"))
+    prof(climber="laura", goal="rehab", therapist="Dr. Berger", rehab_level="easy", sessions_per_week=2)
+    out = prof(climber="laura")
+    check("profile: rehab settings shown as health data", "health data - always private" in out
+          and "Updated" not in out, out)
+    prof(climber="laura", goal="train")
+    check("profile: rehab data removed when the goal changes", "rehab" not in ascent.load_profile("laura"))
+    check("profile: unknown climber without details is refused", refused(climber="nobody"))
+
+    prof(climber="max", delete=True)
+    check("profile: --delete without --yes only shows what would go", ascent.load_profile("max") is not None)
+    prof(climber="max", delete=True, yes=True)
+    j1 = ascent.load_route("tw", "j1")
+    check("profile: --delete --yes removes profile and logbook, routes stay anonymous",
+          ascent.load_profile("max") is None and not os.path.exists("logbook/max.json") and "by" not in j1)
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -460,6 +506,7 @@ def main():
         rehearse_track(gui, photo, holds, corners)
         rehearse_log()
         rehearse_progress()
+        rehearse_profile()
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

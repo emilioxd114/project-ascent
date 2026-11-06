@@ -12,7 +12,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Motion tracking with audio** (`track`, 6 Nov): MediaPipe hand tracking mapped into wall centimetres, sounds for right/wrong order, the camera's guess of sent / tried / fail. Tested with a scripted hand and the real model on an empty frame; **not yet tested with a real person or the wooden mannequin.**
 - **Logbook** (`log`, 6 Nov): route + result (sent / tried / fail) + date, typed or from `track --climber`; "N people climbed this" counted from it. Stored per person under `logbook/`, out of git.
 - **Progress and recommendations** (`progress`, `recommend`, 6 Nov): skills for Lena, levels without grade points for Max, sessions against the therapist's goal for Laura; milestones; rule-based "you rarely climb pinches" recommendations that can generate the routes. `generate` and `build` take an optional `--by`.
-- **Tests:** selftest and the rehearsal (44 checks, 45 with MediaPipe), all passing.
+- **Profile** (`profile`, 6 Nov): goal, language, level, height, age group, visibility with stricter rules for minors and health data, therapist-set rehab settings, delete one person from everything. Local files only; accounts still need a server.
+- **Tests:** selftest and the rehearsal (56 checks, 57 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested
@@ -46,8 +47,7 @@ Status as of the night of 5 Nov 2026, before the final day.
 
 ### Group 3 (community and app basics)
 
-- Sign-up asks for goal (Play / Rehab / Train), language, level and height — height feeds the reach guardrail.
-- Visibility model first: private / friends / public, with stricter defaults for minors and health data.
+- Done locally (6 Nov, `profile`): sign-up asks for goal (Play / Rehab / Train), language, level and height — height feeds `recommend`; visibility private / friends / public with stricter rules for minors and health data; delete one person. Still open: real accounts and sign-in (server), and parental consent as a real flow, not a flag.
 - Duplicate walls: merge by gym and location.
 
 ### Motion tracking with audio — minimal version built (`track`)
