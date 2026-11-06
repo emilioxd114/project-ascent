@@ -97,6 +97,7 @@ python ascent.py serve
 
 It prints links like `https://192.168.1.23:8443/live?code=k7mz2p`. Type the whole link into the phone's browser (Safari on iPhone, Chrome on Android) - the code is part of it, and without it the page says "Ask for the link with the code". A new code is made every time you start `serve`; `--code` sets your own.
 
+- **/scan** - scan a wall with the phone: name it, **Take photo** (whole wall in frame), tap the 4 corners, type width and height in cm (or leave the width empty to skip), tap every hold and its type, **Save wall**. Same result as `python ascent.py scan`, versions included: scanning an existing wall again makes a new version and archives the old one. Small holds: turn the phone sideways and pinch to zoom.
 - **/live** - pick wall and route, tap **Start camera**, point at the wall. Rings appear only while the wall is matched. **New route** = the `g` key, **Next route** = `n`. Hold the phone sideways to fit a whole wall.
 
 ### Connecting phone and laptop

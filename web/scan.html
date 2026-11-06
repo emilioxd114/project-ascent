@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ascent - scan a wall</title>
+<link rel="stylesheet" href="web/style.css">
+<style>
+  #view { width: 100%; display: block; border-radius: 8px; touch-action: manipulation; background: #000; }
+  .types { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+  .types button.on { background: var(--amber); color: #0c0e10; }
+  .step { margin-top: 10px; }
+  .page { max-width: none; }
+  .page > section, .page > h1, .page > p, .page > .error { max-width: 640px; }
+  .sticky { position: sticky; bottom: 0; background: var(--bg); padding: 8px 0 calc(8px + env(safe-area-inset-bottom)); }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Scan a wall</h1>
+  <p class="muted" id="hint">Once per wall (and after every reset). Stand back so the whole wall is in the photo.</p>
+
+  <section id="s-photo" class="step">
+    <label for="name">Wall name (letters, digits, - and _)</label>
+    <input id="name" value="panel" autocapitalize="off" autocomplete="off">
+    <div id="exists" class="muted"></div>
+    <label><input id="markers" type="checkbox" style="width:auto"> Use the printed markers for the corners</label>
+    <input id="cam" type="file" accept="image/*" capture="environment" class="hidden">
+    <input id="gallery" type="file" accept="image/*" class="hidden">
+    <div class="row" style="margin-top:12px">
+      <button id="camBtn" class="primary">Take photo</button>
+      <button id="galleryBtn">Choose a photo</button>
+    </div>
+  </section>
+
+  <canvas id="view" class="hidden"></canvas>
+
+  <section id="s-corners" class="step hidden sticky">
+    <div id="cornerMsg"></div>
+    <div class="row"><button id="cornerUndo">Undo</button><button id="cornerNext" class="primary" disabled>Next</button></div>
+  </section>
+
+  <section id="s-size" class="step hidden">
+    <p>Measure the climbing area once with a tape. The size lets the app check that every move is within reach.</p>
+    <div class="row">
+      <div><label for="w">Width, top-left to top-right (cm)</label><input id="w" type="number" inputmode="decimal" placeholder="skip"></div>
+      <div><label for="h">Height, top-left to bottom-left (cm)</label><input id="h" type="number" inputmode="decimal"></div>
+    </div>
+    <p class="muted" id="sizeNote">Leave the width empty to skip: then 300 cm is assumed and reach checks are approximate.</p>
+    <div class="row"><button id="sizeBack">Back</button><button id="sizeNext" class="primary">Next: tap the holds</button></div>
+  </section>
+
+  <section id="s-holds" class="step hidden sticky">
+    <div id="holdMsg"></div>
+    <div class="types" id="types"></div>
+    <div class="row"><button id="holdUndo">Undo</button><button id="save" class="primary" disabled>Save wall</button></div>
+  </section>
+
+  <section id="s-done" class="step hidden">
+    <h1 id="doneTitle"></h1>
+    <p id="doneText"></p>
+    <p><a data-page="/live">See routes on it</a> &middot; <a data-page="/scan" onclick="location.reload()">Scan another</a></p>
+  </section>
+  <div id="error" class="error"></div>
+</div>
+<script src="web/common.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const view = $("view"), ctx = view.getContext("2d");
+const TYPES = ["jug", "crimp", "sloper", "pinch", "pocket"];
+let photo = null, dataUrl = null, step = "photo", corners = [], holds = [], sel = -1, walls = [], markersFound = false;
+
+function show(id) {
+  ["s-photo", "s-corners", "s-size", "s-holds", "s-done"].forEach(s => $(s).classList.toggle("hidden", s !== id));
+  view.classList.toggle("hidden", !photo || id === "s-done" || id === "s-photo");
+}
+
+// Same order as the laptop: top-left, top-right, bottom-right, bottom-left.
+function orderCorners(p) {
+  const s = p.map(([x, y]) => x + y), d = p.map(([x, y]) => y - x);
+  const at = (arr, f) => p[arr.indexOf(f(...arr))];
+  return [at(s, Math.min), at(d, Math.min), at(s, Math.max), at(d, Math.max)];
+}
+
+function draw() {
+  if (!photo) return;
+  ctx.drawImage(photo, 0, 0, view.width, view.height);
+  const k = view.width / view.clientWidth;            // photo pixels per screen pixel
+  ctx.lineWidth = 2.5 * k;
+  if (corners.length) {
+    ctx.strokeStyle = Ascent.COLORS.amber;
+    ctx.beginPath();
+    const poly = corners.length === 4 ? orderCorners(corners) : corners;
+    poly.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    if (corners.length === 4) ctx.closePath();
+    ctx.stroke();
+    corners.forEach(([x, y], i) => {
+      ctx.fillStyle = Ascent.COLORS.amber;
+      ctx.beginPath(); ctx.arc(x, y, 9 * k, 0, 2 * Math.PI); ctx.fill();
+      ctx.fillStyle = Ascent.COLORS.dark; ctx.font = `bold ${12 * k}px system-ui`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(String(i + 1), x, y);
+    });
+  }
+  holds.forEach((h, i) => {
+    const [x, y] = h.px, r = 10 * k;
+    ctx.lineWidth = 6 * k; ctx.strokeStyle = Ascent.COLORS.dark;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
+    ctx.lineWidth = 3 * k; ctx.strokeStyle = i === sel ? Ascent.COLORS.amber : Ascent.COLORS.white;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
+    if (h.type) {
+      ctx.font = `bold ${12 * k}px system-ui`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.lineWidth = 4 * k; ctx.strokeStyle = Ascent.COLORS.dark; ctx.strokeText(h.type, x + r + 4 * k, y);
+      ctx.fillStyle = Ascent.COLORS.white; ctx.fillText(h.type, x + r + 4 * k, y);
+    }
+  });
+}
+
+const names = ["top-left", "top-right", "bottom-right", "bottom-left"];
+function cornerStep() {
+  step = "corners"; show("s-corners");
+  $("cornerMsg").textContent = markersFound ? "Markers found - their centres are the corners." :
+    corners.length < 4 ? `Tap the ${names[corners.length]} corner of the climbing area (fixed points, never a hold).`
+                       : "All 4 corners. Next, or Undo to fix one.";
+  $("cornerNext").disabled = corners.length !== 4;
+  $("cornerUndo").disabled = markersFound || !corners.length;
+  draw();
+}
+
+function holdStep() {
+  step = "holds"; show("s-holds");
+  const typed = holds.filter(h => h.type).length;
+  $("holdMsg").textContent = `${holds.length} holds, ${typed} tagged. Tap each hold, then its type. ` +
+                             "Tap a hold again to select it. Small holds: turn the phone sideways, pinch to zoom.";
+  $("save").disabled = !holds.length;
+  document.querySelectorAll("#types button").forEach(b =>
+    b.classList.toggle("on", sel >= 0 && holds[sel] && (holds[sel].type || "none") === b.dataset.t));
+  draw();
+}
+
+TYPES.concat(["none"]).forEach(t => {
+  const b = document.createElement("button");
+  b.textContent = t; b.dataset.t = t;
+  b.onclick = () => { if (sel >= 0) { holds[sel].type = t === "none" ? null : t; holdStep(); } };
+  $("types").appendChild(b);
+});
+
+view.addEventListener("click", e => {
+  const r = view.getBoundingClientRect();
+  const x = (e.clientX - r.left) * view.width / r.width, y = (e.clientY - r.top) * view.height / r.height;
+  if (step === "corners" && !markersFound && corners.length < 4) { corners.push([x, y]); cornerStep(); }
+  else if (step === "holds") {
+    const k = view.width / view.clientWidth;
+    const near = holds.findIndex(h => Math.hypot(h.px[0] - x, h.px[1] - y) < 10 * k);
+    if (near >= 0) sel = near; else { holds.push({ px: [x, y], type: null }); sel = holds.length - 1; }
+    holdStep();
+  }
+});
+
+async function loadPhoto(file) {
+  $("error").textContent = "";
+  if (!file) return;
+  let img;
+  try { img = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch (e) {
+    img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej;
+                                             i.src = URL.createObjectURL(file); });
+  }
+  // Upright (the browser applies the photo's rotation), at most 1600 px: the laptop gets exactly what you tap on.
+  const s = Math.min(1, 1600 / Math.max(img.width, img.height));
+  view.width = Math.round(img.width * s); view.height = Math.round(img.height * s);
+  const tmp = document.createElement("canvas"); tmp.width = view.width; tmp.height = view.height;
+  tmp.getContext("2d").drawImage(img, 0, 0, tmp.width, tmp.height);
+  dataUrl = tmp.toDataURL("image/jpeg", 0.9);
+  photo = tmp; corners = []; holds = []; sel = -1; markersFound = false;
+  if ($("markers").checked) {
+    try {
+      const m = await Ascent.api("/api/scan/markers", { image: dataUrl });
+      if (!m.corners) { $("error").textContent = `Found ${m.found} of 4 markers. Make sure all four are visible ` +
+                                                 "and flat, then take the photo again."; show("s-photo"); return; }
+      corners = m.corners; markersFound = true;
+    } catch (e) { $("error").textContent = e.message; return; }
+  }
+  cornerStep();
+}
+$("camBtn").onclick = () => { if (!$("name").value.trim()) { $("error").textContent = "Give the wall a name."; return; }
+                               $("cam").click(); };
+$("galleryBtn").onclick = () => $("gallery").click();
+$("cam").onchange = e => loadPhoto(e.target.files[0]);
+$("gallery").onchange = e => loadPhoto(e.target.files[0]);
+
+$("cornerUndo").onclick = () => { corners.pop(); cornerStep(); };
+$("cornerNext").onclick = () => {
+  step = "size"; show("s-size");
+  view.classList.remove("hidden");
+  const est = () => {
+    const [tl, tr, , bl] = orderCorners(corners);
+    const w = parseFloat($("w").value);
+    const ratio = Math.hypot(bl[0] - tl[0], bl[1] - tl[1]) / Math.hypot(tr[0] - tl[0], tr[1] - tl[1]);
+    $("h").placeholder = "about " + Math.round((w > 0 ? w : 300) * ratio);
+  };
+  $("w").oninput = est; est();
+};
+$("sizeBack").onclick = () => { if (markersFound) { show("s-photo"); } else { cornerStep(); } };
+$("sizeNext").onclick = () => {
+  const w = $("w").value, h = $("h").value;
+  if ((w && !(parseFloat(w) > 0)) || (h && !(parseFloat(h) > 0))) { $("error").textContent = "Sizes are in cm, more than 0."; return; }
+  $("error").textContent = "";
+  holdStep();
+};
+$("holdUndo").onclick = () => { holds.pop(); sel = holds.length - 1; holdStep(); };
+
+$("save").onclick = async () => {
+  const name = $("name").value.trim();
+  const old = walls.find(w => w.name === name);
+  if (old && !confirm(`'${name}' exists (version ${old.version}). Saving makes version ${old.version + 1}; ` +
+                      "the old version and its routes are archived, nothing is deleted.")) return;
+  $("save").disabled = true;
+  try {
+    const r = await Ascent.api("/api/scan", {
+      wall: name, image: dataUrl, markers: markersFound, corners: markersFound ? [] : corners,
+      width: parseFloat($("w").value) || null, height: parseFloat($("h").value) || null,
+      holds: holds.map(h => ({ px: h.px, type: h.type })) });
+    $("doneTitle").textContent = `Saved '${r.wall}', version ${r.version}`;
+    $("doneText").textContent = `${r.holds} holds, ${r.typed} tagged. ${Math.round(r.size_cm.w)} x ` +
+      `${Math.round(r.size_cm.h)} cm` + (r.size_cm.assumed ? " (assumed - reach checks approximate)." : ".");
+    step = "done"; show("s-done");
+  } catch (e) { $("error").textContent = e.message; $("save").disabled = false; }
+};
+
+$("name").oninput = () => {
+  const old = walls.find(w => w.name === $("name").value.trim());
+  $("exists").textContent = old ? `Exists (version ${old.version}). A new scan becomes version ${old.version + 1}.` : "";
+};
+Ascent.getJSON("/api/walls").then(d => { walls = d.walls; $("name").oninput(); })
+  .catch(e => { $("error").textContent = e.message; });
+window.addEventListener("resize", draw);
+show("s-photo");
+</script>
+</body>
+</html>

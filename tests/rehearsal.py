@@ -547,6 +547,66 @@ def rehearse_serve_live(photo):
         httpd.server_close()
 
 
+def rehearse_serve_scan(photo, holds, corners, mphoto):
+    """/scan: the phone's photo, corners, size and holds become the same wall.json and ref.jpg, with versions."""
+    import base64
+    httpd, phone, _ = start_server()
+    b64 = lambda img: "data:image/jpeg;base64," + base64.b64encode(cv2.imencode(".jpg", img)[1]).decode()
+    try:
+        types = ["jug", None, "sloper", "crimp", None, "pinch"]
+        req = {"wall": "phonewall", "image": b64(photo), "corners": [list(map(float, c)) for c in corners[[2, 0, 3, 1]]],
+               "width": 300, "height": None, "holds": [{"px": list(map(float, h)), "type": types[i % 6]}
+                                                       for i, h in enumerate(holds)]}
+        st, r, _ = phone.post("/api/scan", req)
+        wall = json.load(open("walls/phonewall/wall.json"))
+        check("scan page: saves wall.json and ref.jpg", st == 200 and r["version"] == 1 and
+              os.path.exists("walls/phonewall/ref.jpg") and len(wall["holds"]) == len(holds), str(r))
+        check("scan page: corners in any order, height from the photo",
+              np.allclose(wall["corners_px"][0], corners[0], atol=1) and abs(wall["size_cm"]["h"] - 300 * 590 / 820) < 2
+              and not wall["size_cm"]["assumed"], str(wall["size_cm"]))
+        R = ascent.rectify_matrix(np.array(wall["corners_px"], np.float32), 300, wall["size_cm"]["h"])
+        cm = ascent.transform(R, holds)
+        check("scan page: hold centimetres and types as the CLI computes them",
+              np.allclose([h["cm"] for h in wall["holds"]], cm, atol=0.2)
+              and [h["type"] for h in wall["holds"]] == [types[i % 6] for i in range(len(holds))])
+        ascent.save_route(wall, [1, 2, 3], "p1", "built", 172)
+        st, r, _ = phone.post("/api/scan", {**req, "width": None, "holds": req["holds"][:5]})
+        v2 = json.load(open("walls/phonewall/wall.json"))
+        check("scan page: re-scan is version 2, version 1 and its routes archived",
+              r["version"] == 2 and os.path.exists("walls/phonewall/archive_v1/routes/p1.json")
+              and v2["size_cm"]["assumed"] and v2["size_cm"]["w"] == 300.0, str(r))
+
+        st, m, _ = phone.post("/api/scan/markers", {"image": b64(mphoto)})
+        st2, m2, _ = phone.post("/api/scan/markers", {"image": b64(photo)})
+        check("scan page: markers found on the photo, or how many", m["found"] == 4 and m["corners"]
+              and m2["found"] == 0 and m2["corners"] is None)
+        st, r, _ = phone.post("/api/scan", {"wall": "phonemarkers", "image": b64(mphoto), "markers": True,
+                                            "width": 300, "height": 220, "holds": [{"px": [640, 360]}]})
+        mw = json.load(open("walls/phonemarkers/wall.json"))
+        check("scan page: markers mode", st == 200 and mw["mode"] == "markers" and len(mw["markers_px"]) == 4)
+
+        bad = [
+            {**req, "corners": req["corners"][:3]},
+            {**req, "holds": [{"px": [10, 10], "type": "foothold"}]},
+            {**req, "holds": []},
+            {**req, "wall": "../evil"},
+            {**req, "holds": [{"px": [99999, 10]}]},
+            {**req, "width": -5},
+            {**req, "corners": [[10, 10], [11, 10], [11, 11], [10, 11]]},
+            {**req, "image": "bm90IGEgcGhvdG8="},
+            {"wall": "phonemarkers", "image": b64(photo), "markers": True, "holds": [{"px": [1, 1]}]},
+        ]
+        codes = [phone.post("/api/scan", b)[0] for b in bad]
+        check("scan page: bad scans are refused and nothing is saved", codes == [400] * len(bad)
+              and json.load(open("walls/phonewall/wall.json"))["version"] == 2
+              and not os.path.exists("walls/evil"), str(codes))
+        st, page, _ = phone.request("GET", "/scan")
+        check("scan page: /scan loads", st == 200 and b"/api/scan" in page)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def check(label, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {label}" + (f"  ({detail})" if detail else ""))
     if not ok:
@@ -727,6 +787,7 @@ def main():
         rehearse_routes()
         rehearse_challenges()
         rehearse_serve_live(photo)
+        rehearse_serve_scan(photo, holds, corners, mphoto)
     finally:
         os.chdir(ROOT)
         shutil.rmtree(work, ignore_errors=True)

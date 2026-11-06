@@ -18,7 +18,7 @@ The phone screens live on a Design canvas in Claude: **Project Ascent — scan a
 
 ## The phone pages (prototype)
 
-`python ascent.py serve` serves plain HTML pages to a phone (dark, camera-first like the canvas): `/live` - choose wall and route, the camera fills the screen, "Locked" in green or the move-closer / step-back message in amber at the top, **New route** / **Next route** / **Stop** at the bottom. Hold the phone sideways to see a whole wall.
+`python ascent.py serve` serves plain HTML pages to a phone (dark, camera-first like the canvas): `/live` - choose wall and route, the camera fills the screen, "Locked" in green or the move-closer / step-back message in amber at the top, **New route** / **Next route** / **Stop** at the bottom. Hold the phone sideways to see a whole wall. `/scan` - wall name, Take photo / Choose a photo, tap the 4 corners (amber, numbered), width and height, then tap holds with type buttons (jug, crimp, sloper, pinch, pocket, none) and Save. It fills design gap 1 (hold tapping) as a working page.
 
 ## Design decisions
 

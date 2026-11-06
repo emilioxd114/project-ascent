@@ -645,30 +645,37 @@ def cmd_scan(args):
                           default=h_default)
 
     holds = click_holds(photo, corners)
+    save_scan(args.wall, photo, corners, w_cm, h_cm, assumed, holds, markers_px)
+    print(f"Next: python ascent.py generate --wall {args.wall} --preview")
+
+
+def save_scan(name, photo, corners, w_cm, h_cm, assumed, holds, markers_px=None):
+    """Saves a scan as the wall's newest version (the old one is archived). Shared by 'scan' and the phone's
+    /scan page. holds: [{"px": [x, y], "type": ...}] in photo pixels; corners in photo pixels, ordered."""
     R = rectify_matrix(corners, w_cm, h_cm)
     cms = transform(R, [h["px"] for h in holds])
     for i, (h, c) in enumerate(zip(holds, cms), start=1):
         h["id"] = i
         h["cm"] = [round(float(c[0]), 1), round(float(c[1]), 1)]
 
-    version = archive_existing(args.wall)
-    os.makedirs(wall_path(args.wall), exist_ok=True)
-    cv2.imwrite(wall_path(args.wall, "ref.jpg"), photo)
+    version = archive_existing(name)
+    os.makedirs(wall_path(name), exist_ok=True)
+    cv2.imwrite(wall_path(name, "ref.jpg"), photo)
     wall = {
-        "name": args.wall,
+        "name": name,
         "version": version,
         "scanned": time.strftime("%Y-%m-%d %H:%M"),
-        "mode": "markers" if args.markers else "features",
-        "corners_px": corners.tolist(),
+        "mode": "markers" if markers_px else "features",
+        "corners_px": np.asarray(corners).tolist(),
         "size_cm": {"w": w_cm, "h": h_cm, "assumed": assumed},
         "holds": holds,
     }
     if markers_px:
         wall["markers_px"] = markers_px
-    save_json(wall_path(args.wall, "wall.json"), wall)
+    save_json(wall_path(name, "wall.json"), wall)
     typed = sum(1 for h in holds if h["type"])
-    print(f"\nSaved wall '{args.wall}' version {version}: {len(holds)} holds, {typed} tagged with a type.")
-    print(f"Next: python ascent.py generate --wall {args.wall} --preview")
+    print(f"\nSaved wall '{name}' version {version}: {len(holds)} holds, {typed} tagged with a type.")
+    return wall
 
 
 def save_route(wall, ids, name, how, height, train=(), by=None):
@@ -2076,6 +2083,64 @@ class PhoneSession:
             self.use(load_route(self.wall["name"], names[(i + 1) % len(names)]))
 
 
+def decode_photo(data_url):
+    """A JPEG from the phone, as a data URL or plain base64. The phone has already turned it upright."""
+    import base64
+    raw = base64.b64decode(data_url.split(",", 1)[-1], validate=False)
+    img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("The photo could not be read.")
+    return img
+
+
+def phone_scan(req):
+    """The phone's /scan page: the same checks as 'scan', then the same save_scan (versioning included)."""
+    name = safe_name(req.get("wall") or "")
+    photo = decode_photo(req["image"])
+    ph, pw = photo.shape[:2]
+
+    def point(p):
+        x, y = float(p[0]), float(p[1])
+        if not (0 <= x <= pw and 0 <= y <= ph):
+            raise ValueError("A tap is outside the photo.")
+        return [x, y]
+
+    markers_px = None
+    if req.get("markers"):
+        found = aruco_detect(cv2.cvtColor(photo, cv2.COLOR_BGR2GRAY))
+        if len(found) < 4:
+            raise ValueError(f"Found {len(found)} of 4 markers in the photo. Make sure all four are visible and flat.")
+        corners = order_corners([c.mean(axis=0) for c in found.values()])
+        markers_px = {str(k): v.tolist() for k, v in found.items()}
+    else:
+        pts = [point(p) for p in req.get("corners") or []]
+        if len(pts) != 4:
+            raise ValueError("Tap exactly 4 corners.")
+        corners = order_corners(pts)
+        if quad_area(corners) < 0.01 * pw * ph or not cv2.isContourConvex(corners.reshape(-1, 1, 2)):
+            raise ValueError("The 4 corners don't make a proper wall shape - tap them again.")
+    top = np.linalg.norm(corners[1] - corners[0])
+    side = np.linalg.norm(corners[3] - corners[0])
+    w = req.get("width")
+    assumed = not w
+    w_cm = float(w) if w else 300.0
+    h = req.get("height")
+    h_cm = float(h) if h else float(round(w_cm * side / top))
+    if w_cm <= 0 or h_cm <= 0 or w_cm > 5000 or h_cm > 5000:
+        raise ValueError("Width and height are in cm and must be more than 0.")
+    holds = []
+    for hd in req.get("holds") or []:
+        t = hd.get("type") or None
+        if t is not None and t not in HOLD_TYPES.values():
+            raise ValueError(f"Unknown hold type '{t}'.")
+        holds.append({"px": point(hd["px"]), "type": t})
+    if not holds:
+        raise ValueError("Tap at least one hold.")
+    wall = save_scan(name, photo, corners, w_cm, h_cm, assumed, holds, markers_px)
+    return {"wall": name, "version": wall["version"], "holds": len(holds),
+            "typed": sum(1 for x in holds if x["type"]), "size_cm": wall["size_cm"]}
+
+
 def walls_overview():
     out = []
     if not os.path.isdir(DATA_DIR):
@@ -2217,6 +2282,13 @@ def make_handler(code, sessions):
                 with s.lock:
                     s.new_route() if path.endswith("new") else s.next_route()
                     return s.info()
+            if path == "/api/scan/markers":
+                photo = decode_photo(json.loads(self.body())["image"])
+                found = aruco_detect(cv2.cvtColor(photo, cv2.COLOR_BGR2GRAY))
+                corners = order_corners([c.mean(axis=0) for c in found.values()]).tolist() if len(found) >= 4 else None
+                return {"found": len(found), "corners": corners}
+            if path == "/api/scan":
+                return phone_scan(json.loads(self.body()))
             raise ValueError("Unknown API call.")
 
     return Handler

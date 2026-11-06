@@ -16,7 +16,8 @@ Status as of the night of 5 Nov 2026, before the final day.
 - **Safety card and route filters** (`safety`, `routes`, 6 Nov): a 7-line card in English or German, shown once per climber and wall; the boulder list filtered by skill, grade, holds, made by, setter, not yet sent, within reach, with "N climbed".
 - **Challenges** (`challenge`, 6 Nov): invite someone on the same laptop to a route; done when they send it or give it a real try; both get a milestone and points; no deadline; minors can't be sent routes past their reach. Sending between phones needs the server.
 - **Phone as camera, live** (`serve` + `/live`, 6 Nov): local HTTPS server, the phone streams frames, the laptop tracks and answers with ring positions. Tested headlessly with synthetic frames and in headless Chromium with a fake camera; **not yet on a real phone.**
-- **Tests:** selftest and the rehearsal (94 checks, 95 with MediaPipe), all passing.
+- **Phone scan** (`/scan`, 6 Nov): photo, 4 corners or markers, size, holds and types on the phone, saved through the same `save_scan` as the CLI. Tested headlessly and in headless Chromium; not yet on a real phone.
+- **Tests:** selftest and the rehearsal (102 checks, 103 with MediaPipe), all passing.
 - **Demo script:** DEMO.md.
 
 ## Not yet tested
