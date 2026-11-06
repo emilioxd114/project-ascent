@@ -2424,9 +2424,8 @@ def cmd_serve(args):
         print("No network found. Join a Wi-Fi or the phone's hotspot, then start serve again.")
     for ip in ips:
         base = f"https://{ip}:{args.port}"
-        print(f"  See a route:    {base}/live?code={code}")
-        print(f"  Scan a wall:    {base}/scan?code={code}")
-        print(f"  Record my try:  {base}/track?code={code}")
+        print(f"  Open on the phone:  {base}/?code={code}")
+    print("One page with three buttons: See a route, Scan a wall, Record my try.")
     print("The phone warns about the certificate the first time - see START_HERE.md. Ctrl+C = stop.")
     try:
         httpd.serve_forever()

@@ -607,6 +607,11 @@ def rehearse_serve_scan(photo, holds, corners, mphoto):
               and not os.path.exists("walls/evil"), str(codes))
         st, page, _ = phone.request("GET", "/scan")
         check("scan page: /scan loads", st == 200 and b"/api/scan" in page)
+        check("scan page: photo is taken in the page, not in the phone's camera app",
+              b"startCamera" in page and b"capture=" not in page)
+        st, home, _ = phone.request("GET", "/")
+        check("start page: one link opens all three pages",
+              st == 200 and all(p in home for p in (b'"/live"', b'"/scan"', b'"/track"')))
     finally:
         httpd.shutdown()
         httpd.server_close()
