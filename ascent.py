@@ -314,8 +314,8 @@ def hold_cm(wall):
     return {h["id"]: np.array(h["cm"], dtype=float) for h in wall["holds"]}
 
 
-def generate_route(wall, moves=6, height=172.0, train=(), level="medium", seed=None, attempts=600):
-    holds = wall["holds"]
+def generate_route(wall, moves=6, height=172.0, train=(), level="medium", seed=None, attempts=600, colours=()):
+    holds = [h for h in wall["holds"] if h.get("colour") in colours] if colours else wall["holds"]
     pos = hold_cm(wall)
     W, Hh = wall["size_cm"]["w"], wall["size_cm"]["h"]
     reach = REACH_FACTOR * height
@@ -852,15 +852,20 @@ def parse_train(text):
     return [t.strip().lower() for t in text.split(",") if t.strip()] if text else []
 
 
-def make_generated_route(wall, moves, height, train, level, seed=None, name=None, by=None):
+def make_generated_route(wall, moves, height, train, level, seed=None, name=None, by=None, colours=()):
     """Generate, save and return a route, or None if nothing fits. Shared by 'generate' and the live 'g' key."""
     typed = {h.get("type") for h in wall["holds"]}
     for t in train:
         if t in HOLD_TYPES.values() and t not in typed:
             print(f"Note: no hold is tagged '{t}', so that filter cannot work. Tag holds during the scan.")
+    have = {h.get("colour") for h in wall["holds"]}
+    for c in colours:
+        if c not in have:
+            print(f"Note: no hold has the colour '{c}'. Colours come from scan --auto; this wall has: "
+                  f"{', '.join(sorted(x for x in have if x)) or 'none'}.")
     ids = None
     for n in range(moves, 2, -1):
-        ids = generate_route(wall, n, height, train, level, seed)
+        ids = generate_route(wall, n, height, train, level, seed, colours=colours)
         if ids:
             if n < moves:
                 print(f"Could not fit {moves} holds on this wall within reach - made a {n}-hold route.")
@@ -868,7 +873,7 @@ def make_generated_route(wall, moves, height, train, level, seed=None, name=None
     if not ids:
         return None
     name = name or next_route_name(wall["name"])
-    route = save_route(wall, ids, name, "generated", height, train, by)
+    route = save_route(wall, ids, name, "generated", height, list(train) + list(colours), by)
     print(f"Route '{name}': holds {ids}, grade {route['estimated_grade']} (estimated)")
     for w in route["warnings"]:
         print("  ! " + w)
@@ -878,7 +883,8 @@ def make_generated_route(wall, moves, height, train, level, seed=None, name=None
 def cmd_generate(args):
     wall, ref = load_wall(args.wall)
     route = make_generated_route(wall, args.moves, args.height, parse_train(args.train), args.level,
-                                 args.seed, args.name, getattr(args, "by", None))
+                                 args.seed, args.name, getattr(args, "by", None),
+                                 parse_train(getattr(args, "colour", "") or ""))
     if route is None:
         sys.exit("No route fits these settings. Try fewer moves, an easier level, or tap more holds.")
     print(f"Climb it: python ascent.py live --wall {args.wall} --route {route['name']}")
@@ -2760,6 +2766,7 @@ def main():
     p.add_argument("--seed", type=int)
     p.add_argument("--preview", action="store_true")
     p.add_argument("--by", help="who set the route (optional, counts for their progress)")
+    p.add_argument("--colour", default="", help="only holds of these colours (from scan --auto), e.g. red or red,blue")
 
     p = sub.add_parser("build")
     p.add_argument("--wall", required=True)

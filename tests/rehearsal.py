@@ -856,6 +856,21 @@ def rehearse_auto_scan(gui):
     gen = quiet(ascent.cmd_generate, SimpleNamespace(wall="autoprop", name="a1", moves=5, height=30.0, train="",
                                                      level="medium", seed=1, preview=False, by=None))
     check("scan --auto: a route can be made for a 30 cm puppet", "Route 'a1'" in gen, gen.strip()[:80])
+    cols = {h["id"]: h["colour"] for h in w["holds"]}
+    gen = quiet(ascent.cmd_generate, SimpleNamespace(wall="autoprop", name="c1", moves=4, height=30.0, train="traverse",
+                                                     level="easy", seed=2, preview=False, by=None, colour="red,blue"))
+    c1 = ascent.load_route("autoprop", "c1")
+    check("generate --colour: only holds of those colours", "Route 'c1'" in gen
+          and all(cols[i] in ("red", "blue") for i in c1["holds"]) and "red" in c1["train"], str(c1["holds"]))
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            ascent.cmd_generate(SimpleNamespace(wall="autoprop", name="c2", moves=4, height=30.0, train="",
+                                                level="easy", seed=2, preview=False, by=None, colour="green"))
+    except SystemExit:
+        pass
+    check("generate --colour: a colour no hold has is explained", "no hold has the colour 'green'" in buf.getvalue()
+          and "c2" not in ascent.route_names("autoprop"))
 
 
 def check(label, ok, detail=""):

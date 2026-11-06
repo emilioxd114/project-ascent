@@ -113,8 +113,11 @@ python ascent.py generate --wall prop --height 30 --moves 5 --train reach --prev
 python ascent.py generate --wall prop --height 30 --moves 5 --train traverse --preview
 python ascent.py generate --wall prop --height 30 --moves 5 --level easy --preview
 python ascent.py generate --wall prop --height 30 --moves 5 --level hard --preview
+python ascent.py generate --wall prop --height 30 --moves 5 --colour red --preview
 python ascent.py build --wall prop --height 30
 ```
+
+`--colour red` uses only red holds (the colours come from `scan --auto`; `--colour red,blue` for two). Combine with `--train` and `--level`.
 
 `build` = by hand: click the holds in climbing order, Enter saves. Each command prints the route's name (r1, r2, ...). `python ascent.py list` shows them all.
 
