@@ -6,13 +6,13 @@ Presenting? The on-stage script is in [DEMO.md](DEMO.md).
 
 Everything happens on the phone; the laptop only runs the server in the background.
 
-1. **Once, on the laptop:** `pip install opencv-contrib-python numpy cryptography` (MediaPipe is not needed).
-2. **Before the demo:** tape the 4 printed markers near the corners of the wall (optional - without them the app finds the board's outline, and if it can't, it asks you to tap the 4 corners). Put a **green** sticker on your fingertip (or another bright colour that no hold has; pick it under Options).
+1. **Once, on the laptop:** `pip install opencv-contrib-python numpy cryptography`. For a **person** climbing, also `pip install mediapipe` (with wifi: the first climb downloads a 7.8 MB hand model into `models/`): the laptop then tracks your hands and no sticker is needed. Without MediaPipe, a sticker does it.
+2. **Before the demo:** tape the 4 printed markers near the corners of the wall (optional - without them the app finds the board's outline, and if it can't, it asks you to tap the 4 corners). Without MediaPipe: put a **green** sticker on your fingertip (or another bright colour that no hold has; pick it under Options).
 3. **Start the server:** `python ascent.py serve` - and leave that window open. It prints one link like `https://192.168.1.23:8443/?code=k7mz2p`. Phone and laptop on the same Wi-Fi, or the phone's hotspot (see "Connecting phone and laptop" below).
 4. **On the iPhone:** open the link in Safari, accept the certificate warning once (Show Details > visit this website), allow the camera. You are on the **Climb** tab:
-   - **New wall: take a photo** → fit the whole wall → **Capture**. The laptop finds the wall and the holds and draws rings on your photo. **Looks good** saves it. (A ring on something that is not a hold? Tap it to remove it. A hold without a ring? Tap it. Never required.)
-   - **Reach / Traverse / Easy / Hard** → **Make route**: the route is drawn numbered on the photo, green start, red finish. **Another one** for a new one, **Use this route** to keep it.
-   - **Start** → put the phone down 2-4 m back with the whole wall in view. Rings appear on the holds as soon as the wall is matched. **Tap the sticker once on the screen** so the phone learns its colour. Climb: a high beep for the next hold, a low buzz for a hold not on the route, a tune at the top. **Done** shows the camera's guess; **Try again** starts over.
+   - **New wall: take a photo** → fit the whole wall → **Capture**. The laptop finds the wall and the holds and draws rings on your photo. If it asks for the 4 corners, tap the board's corners (top-left, top-right, bottom-right, bottom-left - an amber outline shows them). **Check that every hold has a white ring and no ring sits on nothing** - that is what the climb later goes by. A ring on something that is not a hold? Tap it to remove it. A hold without a ring? Tap it. Then **Looks good** saves it.
+   - **Reach / Traverse / Easy / Hard** → **Make route**: the route is drawn numbered on the photo, green start, red finish, the other holds faint. **Another one** for a new one. **Build my own**: tap the holds in climbing order, from the bottom up. You can also edit any route: tap a ring to take that hold out, tap another hold to add it; the grade and a "past your reach" warning update. **Use this route** keeps it. Rings next to the holds instead of on them? **Fix the holds** brings the photo back; Looks good saves a new version.
+   - **Start** → put the phone down 2-4 m back with the whole wall in view. Rings appear on the holds as soon as the wall is matched. The screen says what the laptop tracks: **your hands** (MediaPipe, nothing to do) or **a sticker** (then tap the sticker once on the screen so the phone learns its colour). An amber circle shows where it sees a hand. Climb: a high beep for the next hold, a low buzz for a hold not on the route, a tune at the top. **Done** shows the camera's guess; **Try again** starts over.
    - Next time: the wall is already there - **Make a route on it** skips the photo.
 
 If the phone shows an amber box, the same error is printed in the laptop window - paste it to whoever fixes it. The three older tabs (See a route, Scan a wall, Record my try) still work as before.
@@ -95,7 +95,7 @@ This draws the route on the saved photo. Combined with the recorded video and th
 python tests/rehearsal.py
 ```
 
-This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations, profiles, safety card, route filters and challenges. Plus the phone pages and the Climb flow over a real local server. 154 checks (155 with MediaPipe installed), all passing. `python tests/e2e/flow_e2e.py` additionally drives the Climb tab in a headless browser with a fake camera (needs Node with Playwright).
+This plays a whole session with scripted clicks, keys and a fake camera video: scan, generate with every filter, build, preview, live (including the g and n keys), markers mode, re-scanning, and locking in dim light, glare and a harsh spotlight. Plus motion tracking with a scripted hand. Plus the logbook, progress, recommendations, profiles, safety card, route filters and challenges. Plus the phone pages and the Climb flow over a real local server, and the hold layout of the real prop wall from the first phone test. 168 checks (170 with MediaPipe and its two models installed), all passing. `python tests/e2e/flow_e2e.py` additionally drives the Climb tab in a headless browser with a fake camera (needs Node with Playwright).
 
 - **Tested:** all of the logic above, and that the rings land on the holds (under 1 pixel of error on simulated video).
 - **Not tested:** a real webcam, real windows on Windows, and the real panel in real light. Run `scan` early tomorrow so there's time to fix anything.
@@ -184,12 +184,14 @@ It prints **one link** like `https://192.168.1.23:8443/?code=k7mz2p`. Type the w
 Needs MediaPipe once: `pip install mediapipe`. Everything else works without it.
 
 ```
-python ascent.py track --wall panel --route r1
+python ascent.py track --wall panel --route r1 --touch hands
 ```
+
+`--touch hands` (MediaPipe hand landmarks: where the fingertips are) is the one for a person climbing; it found the fingertip on the first real photo where the body model (`--touch pose`) put the wrist 20 cm off. The default `--touch sticker` needs no MediaPipe.
 
 Put the laptop 3-4 m back with the whole panel in frame, never on the landing zone. Climb the route: a high beep for each hold reached in order, a low buzz for a hold that is not on the route, a double beep for out of order, a little tune at the top. At the end it prints the camera's guess (sent / tried / fail). Keys: **m** sound on/off, **q** stop. `--mute` for no sound, `--video clip.mp4` to replay a recording.
 
-The first run downloads a 5.5 MB pose model into `models/` - do it once while there is wifi. No video is saved. Installing MediaPipe can also update OpenCV, so on demo day install it after the pitch, or in a separate virtual environment.
+The first run downloads the model into `models/` (7.8 MB for hands, 5.5 MB for pose) - do it once while there is wifi. No video is saved. Installing MediaPipe can also update OpenCV, so on demo day install it after the pitch, or in a separate virtual environment.
 
 Add `--climber lena` to save the attempt in Lena's logbook.
 
