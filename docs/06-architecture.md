@@ -1,6 +1,6 @@
 # 06 · Architecture of the prototype
 
-Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a laptop with its webcam. This is a deliberate hackathon choice (see CLAUDE.md). Moving to a phone app is a separate decision for later.
+Everything is in `ascent.py` — one Python file, OpenCV and numpy, running on a laptop with its webcam. This is a deliberate hackathon choice (see CLAUDE.md). Since 6 Nov a phone can be the camera instead: `serve` (below) is a local HTTPS server, standard library only, with plain HTML and JavaScript pages in `web/`. Moving to a real phone app is a separate decision for later.
 
 ## Commands
 

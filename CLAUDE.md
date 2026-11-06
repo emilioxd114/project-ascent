@@ -38,12 +38,14 @@ Read the relevant doc before changing behaviour. When a decision changes, update
 
 ## Project phase — read this before building anything new
 
-**Current phase: laptop prototype.** Until the team deliberately decides on a platform (`docs/08-status-and-next.md`, "Moving beyond the hackathon"):
+**Current phase: laptop prototype, with the phone as a camera.** On 6 Nov Emilio decided to leave the laptop-only phase for one thing: `python ascent.py serve`, a local HTTPS server on the laptop, so a smartphone on the same Wi-Fi can be the camera (the original goal is a smartphone prototype). Nothing else about the phase changed. Until the team deliberately decides on a platform (`docs/08-status-and-next.md`, "Moving beyond the hackathon"):
 
 - Keep the prototype in `ascent.py`, Python, run from a terminal.
-- Dependencies: OpenCV (`opencv-contrib-python`) and numpy. **MediaPipe is allowed for motion tracking only**, imported inside the command that uses it, so everything else keeps working without it.
+- **The local server (`serve`) uses only the Python standard library** (`http.server`, `ssl`, `threading`): no web framework, no build step. Phone pages are plain HTML and JavaScript in `web/`. The vision work (tracking, motion tracking, saving scans) runs on the laptop through the same functions the CLI uses.
+- The server is local only: HTTPS with a self-signed certificate (made on first run; the `cryptography` package is allowed for that, as an optional import), an access code in the phone URL, no cloud, no accounts. It is not the shared server that accounts and sharing need.
+- Dependencies: OpenCV (`opencv-contrib-python`) and numpy. **MediaPipe is allowed for motion tracking only**, imported inside the command that uses it, so everything else keeps working without it. **`cryptography` is allowed only to make the certificate for `serve`**, imported inside it.
 - Store data as JSON files under `walls/` (and a similar folder for new data, such as logbooks). No database server, no web app, no mobile build.
-- Features that need a server (accounts, community feed, chat, sharing between people) are **designed and mocked**, not built, in this phase.
+- Features that need a shared server (accounts, community feed, chat, sharing between people) are **designed and mocked**, not built, in this phase. The local `serve` doesn't change that.
 - If the user asks for something that breaks these rules, say so and ask whether they're deciding to leave the prototype phase. Don't silently refuse and don't silently comply.
 
 ## Product rules that never change
@@ -70,6 +72,7 @@ Read the relevant doc before changing behaviour. When a decision changes, update
 ## Known gaps
 
 - Not yet tested with a real webcam, real Windows windows, or the real ArtRock panel in venue light.
+- The phone pages (`serve`) are tested headlessly with synthetic frames, not yet on a real iPhone or Android phone.
 - Photo matching may fail on low-texture walls — use `--markers`.
 - Flat walls only; partial resets (a few holds moved) aren't detected.
 - Logbook, profiles, progress, recommendations, routes filters, safety card and challenges (6 Nov) are local-only: personal data in `logbook/`, `profiles/`, `challenges/`, all out of git. Sharing between people still needs the server.

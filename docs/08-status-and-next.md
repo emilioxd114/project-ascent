@@ -63,4 +63,6 @@ Status as of the night of 5 Nov 2026, before the final day.
 
 ## Moving beyond the hackathon
 
+**Decided 6 Nov (Emilio): the phone becomes the camera, through a local server on the laptop.** `python ascent.py serve` runs an HTTPS server on the laptop (standard library only); the phone opens a page, sends camera frames over the Wi-Fi, and the laptop runs the same tracker and sends back where to draw the rings. This is a step towards the smartphone prototype, not the platform decision below: there is still no app, no cloud and no shared database.
+
 If the project continues, the first deliberate decision is the platform: a phone app (for example Flutter or React Native with an on-device vision library) talking to a shared backend for walls and routes. The wall and route formats in 06-architecture.md are a reasonable starting schema. Until that decision is made, keep the prototype one Python file, as CLAUDE.md says.
